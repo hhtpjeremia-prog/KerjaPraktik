@@ -137,6 +137,17 @@ def main() -> None:
         print(f"[smoke] smoke root lama dihapus: {SMOKE_ROOT}", flush=True)
     os.chdir(PROJECT_ROOT)
 
+    attribute_model_source = PROJECT_ROOT / "output" / "attribute_classifier" / "best.pt"
+    attribute_model_target = SMOKE_ROOT / "attribute_classifier" / "best.pt"
+    if not attribute_model_source.exists():
+        raise FileNotFoundError(
+            f"classifier atribut tidak ada: {attribute_model_source}. "
+            "Jalankan builders/train_attribute_classifier.py lebih dulu."
+        )
+    attribute_model_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(attribute_model_source, attribute_model_target)
+    print("[smoke] classifier atribut disalin ke smoke root", flush=True)
+
     for step in NOTEBOOK_STEPS:
         execute_notebook(step)
 

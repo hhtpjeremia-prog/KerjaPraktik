@@ -100,7 +100,8 @@ Nama kamera diambil dari berkas (`stem.split("_")[1]`) dan **wajib** ada di peta
 `SMOKE_MAX_FRAMES_PER_VIDEO` frame. Tujuannya menguji alur tracking, bukan mengukur jumlah.
 
 Output: `output/nb06/{tracking_detections.csv, track_summary.csv, counting_by_video.csv,
-counting_summary.json, roi_mapping_audit.csv, counting_bar.png, overlays/*.mp4}`. Overlay
+counting_timeline.csv, overlay_manifest.json, counting_summary.json, roi_mapping_audit.csv,
+counting_bar.png, overlays/*.mp4}`. Overlay
 dibuat untuk satu rekaman terbaru setiap kamera; agregasi hitungan tetap hanya memakai split test.
 """
 
@@ -150,10 +151,16 @@ TRACK_ROWS_PATH = NB06_ROOT / "tracking_detections.csv"
 TRACK_SUMMARY_PATH = NB06_ROOT / "track_summary.csv"
 COUNTING_BY_VIDEO_PATH = NB06_ROOT / "counting_by_video.csv"
 COUNTING_SUMMARY_PATH = NB06_ROOT / "counting_summary.json"
+COUNTING_TIMELINE_PATH = NB06_ROOT / "counting_timeline.csv"
+OVERLAY_MANIFEST_PATH = NB06_ROOT / "overlay_manifest.json"
+EVENT_CLIPS_DIR = NB06_ROOT / "event_clips"
+EVENT_CLIP_MANIFEST_PATH = NB06_ROOT / "event_clip_manifest.json"
 MAPPING_AUDIT_PATH = NB06_ROOT / "roi_mapping_audit.csv"
 FRAGMENT_MERGES_PATH = NB06_ROOT / "fragment_merges.csv"
 FIGURE_PATH = NB06_ROOT / "counting_bar.png"
 OVERLAY_DIR = NB06_ROOT / "overlays"
+EVENT_CLIPS_DIR.mkdir(parents=True, exist_ok=True)
+OVERLAY_LABELS = os.environ.get("NB06_OVERLAY_LABELS", "0") == "1"
 
 NB06_ROOT.mkdir(parents=True, exist_ok=True)
 OVERLAY_DIR.mkdir(parents=True, exist_ok=True)
@@ -170,13 +177,21 @@ SMOKE_MAX_FRAMES_PER_VIDEO = 60
 VIDEO_EXTENSION = ".mp4"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+EVENT_COLORS_BGR = {
+    "Normal": (235, 235, 235),
+    "Silau": (0, 165, 255),
+    "Berwarna": (255, 210, 0),
+    "SilauBerwarna": (255, 0, 255),
+    "PantulanCahaya": (150, 150, 150),
+}
+
 pd.set_option("display.width", 220)
 pd.set_option("display.max_columns", 40)
 
 display(Markdown(
     f"NB06 siap. Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · device: **{DEVICE}** · "
     f"bobot: `{WEIGHTS_PATH}` (ada: **{WEIGHTS_PATH.exists()}**) · split dihitung: {COUNTED_SPLITS} · "
-    f"minimal {MIN_TRACK_HITS} kemunculan per track"
+    f"minimal {MIN_TRACK_HITS} kemunculan per track · overlay label: **{OVERLAY_LABELS}**"
 ))'''
 
 JOBS_SOURCE = '''def load_json_document(path: Path) -> dict:
@@ -300,6 +315,48 @@ from attribute_classifier import decode_attributes, extract_pixel_features, load
 
 RAW_BOX_DECIMALS = 2
 SCORE_DECIMALS = 4
+LABEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
+LABEL_FONT_SCALE = 0.5
+LABEL_THICKNESS = 1
+LABEL_PADDING = 4
+
+
+def rectangles_overlap(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> bool:
+    return not (
+        first[2] <= second[0]
+        or second[2] <= first[0]
+        or first[3] <= second[1]
+        or second[3] <= first[1]
+    )
+
+
+def draw_debug_label(
+    frame: object,
+    text: str,
+    color: tuple[int, int, int],
+    box: tuple[int, int, int, int],
+) -> None:
+    frame_height, frame_width = frame.shape[:2]
+    x1, y1, x2, y2 = box
+    box_width = max(x2 - x1, 1)
+    box_height = max(y2 - y1, 1)
+    font_scale = LABEL_FONT_SCALE
+    (text_width, text_height), baseline = cv2.getTextSize(text, LABEL_FONT, font_scale, LABEL_THICKNESS)
+    if text_width + LABEL_PADDING * 2 > box_width:
+        font_scale = max(0.25, LABEL_FONT_SCALE * box_width / (text_width + LABEL_PADDING * 2))
+        (text_width, text_height), baseline = cv2.getTextSize(text, LABEL_FONT, font_scale, LABEL_THICKNESS)
+    label_width = text_width + LABEL_PADDING * 2
+    label_height = text_height + baseline + LABEL_PADDING * 2
+    left = max(0, min(x1 + LABEL_PADDING, frame_width - label_width))
+    top = max(0, min(y1 + LABEL_PADDING, frame_height - label_height))
+    right, bottom = left + label_width, top + label_height
+    cv2.rectangle(frame, (left, top), (right, bottom), (15, 15, 15), cv2.FILLED)
+    cv2.putText(
+        frame, text, (left + LABEL_PADDING, bottom - baseline - LABEL_PADDING),
+        LABEL_FONT, font_scale, color, LABEL_THICKNESS, cv2.LINE_AA,
+    )
+
+
 attribute_model, attribute_mean, attribute_std, attribute_metadata = load_classifier(ATTRIBUTE_MODEL_PATH, DEVICE)
 
 
@@ -381,12 +438,6 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                         detector_class_name = TRAINING_CLASS_NAMES[box_classes[box_index]]
                         x1, y1, x2, y2 = [int(round(value)) for value in frame_box]
                         track_id = int(box_track_ids[box_index]) if box_track_ids is not None else None
-                        overlay_label = f"{detector_class_name} {box_scores[box_index]:.2f}"
-                        if track_id is not None:
-                            overlay_label = f"ID {track_id} | {overlay_label}"
-                        cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), (40, 220, 80), 2)
-                        cv2.putText(overlay_frame, overlay_label, (x1, max(20, y1 - 7)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (40, 220, 80), 2, cv2.LINE_AA)
                         if track_id is None:
                             untracked_detection_count += 1
                             continue
@@ -396,6 +447,15 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                             output_class_name = vehicle_type + attribute_suffix
                         else:
                             output_class_name = detector_class_name
+                        event_suffix = output_class_name.removeprefix(vehicle_type) if detector_class_name.startswith(("Mobil", "Motor")) else "PantulanCahaya"
+                        overlay_color = EVENT_COLORS_BGR.get(event_suffix, EVENT_COLORS_BGR["PantulanCahaya"])
+                        cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), overlay_color, 2)
+                        if OVERLAY_LABELS:
+                            overlay_label = f"{box_scores[box_index] * 100:.0f}%"
+                            draw_debug_label(
+                                overlay_frame, overlay_label, overlay_color,
+                                (x1, y1, x2, y2),
+                            )
                         tracking_rows.append({
                             "video_stem": job["video_stem"],
                             "camera_id": job["camera_id"],
@@ -543,6 +603,16 @@ if vehicle_detections["vehicle_id"].isna().any():
 vehicle_frame = summarise_units(vehicle_detections, "vehicle_id")
 counted_vehicle_frame = vehicle_frame[vehicle_frame["hits"] >= MIN_TRACK_HITS].copy()
 
+timeline_frame = counted_vehicle_frame.rename(columns={"unit_id": "vehicle_id"})[
+    ["video_stem", "camera_id", "vehicle_id", "class_name", "hits", "first_frame", "last_frame", "mean_score"]
+].copy()
+timeline_frame["fps"] = timeline_frame["video_stem"].map(
+    {row.video_stem: float(row.fps) for row in scan_frame.itertuples()}
+)
+timeline_frame["first_timestamp_seconds"] = timeline_frame["first_frame"] / timeline_frame["fps"]
+timeline_frame["last_timestamp_seconds"] = timeline_frame["last_frame"] / timeline_frame["fps"]
+timeline_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
+
 class_counts = {
     class_name: int((counted_vehicle_frame["class_name"] == class_name).sum())
     for class_name in CLASS_NAMES
@@ -574,6 +644,74 @@ for video_stem, video_slice in counted_vehicle_frame.groupby("video_stem", sort=
     })
 per_video_frame = pd.DataFrame(per_video_rows)
 per_video_frame.to_csv(COUNTING_BY_VIDEO_PATH, index=False)
+
+overlay_manifest = []
+for video_summary in video_summaries:
+    matching_job = next(job for job in scan_jobs if job["video_stem"] == video_summary["video_stem"])
+    overlay_manifest.append({
+        "video_stem": video_summary["video_stem"],
+        "camera_id": video_summary["camera_id"],
+        "split": matching_job["split"],
+        "overlay_path": video_summary["overlay_path"],
+        "fps": float(matching_job["fps"]),
+        "frames_processed": int(video_summary["frames_processed"]),
+        "duration_seconds": round(float(video_summary["frames_processed"]) / float(matching_job["fps"]), 3),
+    })
+OVERLAY_MANIFEST_PATH.write_text(
+    json.dumps(overlay_manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+)
+
+event_clip_manifest = []
+for overlay_info in overlay_manifest:
+    video_events = timeline_frame[timeline_frame["video_stem"] == overlay_info["video_stem"]]
+    if video_events.empty:
+        continue
+    overlay_capture = cv2.VideoCapture(overlay_info["overlay_path"])
+    if not overlay_capture.isOpened():
+        raise RuntimeError(f"overlay tidak bisa dibuka untuk clip event: {overlay_info['overlay_path']}")
+    fps = float(overlay_info["fps"])
+    total_frames = int(overlay_info["frames_processed"])
+    for event in video_events.itertuples(index=False):
+        start_frame = max(0, int(event.first_frame) - int(fps))
+        end_frame = min(total_frames - 1, int(event.last_frame) + int(fps))
+        class_directory = EVENT_CLIPS_DIR / str(event.class_name)
+        class_directory.mkdir(parents=True, exist_ok=True)
+        clip_path = class_directory / f"{event.video_stem}_vehicle_{int(event.vehicle_id):05d}.mp4"
+        overlay_capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        clip_writer = cv2.VideoWriter(
+            str(clip_path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
+            (int(overlay_capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(overlay_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))),
+        )
+        if not clip_writer.isOpened():
+            overlay_capture.release()
+            raise RuntimeError(f"clip event tidak bisa dibuat: {clip_path}")
+        written_frames = 0
+        for _ in range(start_frame, end_frame + 1):
+            read_ok, clip_frame = overlay_capture.read()
+            if not read_ok:
+                break
+            clip_writer.write(clip_frame)
+            written_frames += 1
+        clip_writer.release()
+        if written_frames:
+            event_clip_manifest.append({
+                "class_name": str(event.class_name),
+                "camera_id": str(event.camera_id),
+                "video_stem": str(event.video_stem),
+                "vehicle_id": int(event.vehicle_id),
+                "first_frame": int(event.first_frame),
+                "last_frame": int(event.last_frame),
+                "hits": int(event.hits),
+                "mean_score": float(event.mean_score),
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "clip_path": str(clip_path),
+                "duration_seconds": round(written_frames / fps, 3),
+            })
+    overlay_capture.release()
+EVENT_CLIP_MANIFEST_PATH.write_text(
+    json.dumps(event_clip_manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+)
 
 fragment_merges = track_output.groupby(["video_stem", "vehicle_id"]).agg(
     member_tracks=("track_id", "count"),
@@ -659,6 +797,8 @@ counting_summary_payload = {
     "class_counts": class_counts,
     "counting_totals": counting_totals,
     "selected_thresholds": selected_thresholds,
+    "counting_timeline": str(COUNTING_TIMELINE_PATH),
+    "overlay_manifest": str(OVERLAY_MANIFEST_PATH),
 }
 COUNTING_SUMMARY_PATH.write_text(
     json.dumps(counting_summary_payload, indent=2, ensure_ascii=False), encoding="utf-8"

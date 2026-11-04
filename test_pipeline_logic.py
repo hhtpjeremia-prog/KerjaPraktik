@@ -188,12 +188,7 @@ def check_training_class_names() -> None:
     assert training_class_name("MotorSilauBerwarna") == "MotorSilau"
     assert training_class_name("PantulanCahaya") == "PantulanCahaya"
     unmeasurable = sorted(UNMEASURABLE_COUNT_CONTRACT_KEYS)
-    assert unmeasurable == [
-        "jumlah_lampu_berwarna_mobil",
-        "jumlah_lampu_berwarna_motor",
-        "jumlah_lampu_silau_dan_berwarna_mobil",
-        "jumlah_lampu_silau_dan_berwarna_motor",
-    ], unmeasurable
+    assert unmeasurable == [], unmeasurable
     unmeasurable_box = sorted(UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS)
     assert unmeasurable_box == [
         "jumlah_box_lampu_berwarna_mobil",
@@ -252,7 +247,7 @@ def check_dashboard_camera_table_sums_per_camera() -> None:
                 "vehicles_counted": 4,
                 "jumlah_kendaraan_mobil": 3,
                 "jumlah_kendaraan_motor": 1,
-                "jumlah_lampu_berwarna_mobil": "n/a",
+                "jumlah_lampu_berwarna_mobil": 1,
             },
             {
                 "video_stem": "video_b",
@@ -260,7 +255,7 @@ def check_dashboard_camera_table_sums_per_camera() -> None:
                 "vehicles_counted": 2,
                 "jumlah_kendaraan_mobil": 2,
                 "jumlah_kendaraan_motor": 0,
-                "jumlah_lampu_berwarna_mobil": "n/a",
+                "jumlah_lampu_berwarna_mobil": 2,
             },
             {
                 "video_stem": "video_c",
@@ -277,7 +272,7 @@ def check_dashboard_camera_table_sums_per_camera() -> None:
     assert camera_totals.loc["bogor-kab-pdam2", "vehicles_counted"] == 6
     assert camera_totals.loc["bogor-kab-pdam2", "videos_counted"] == 2
     assert camera_totals.loc["bogor-kab-bappenda2", "jumlah_kendaraan_motor"] == 4
-    assert "jumlah_lampu_berwarna_mobil" not in camera_table.columns
+    assert "jumlah_lampu_berwarna_mobil" in camera_table.columns
     status_frame = build_camera_status_table(camera_table, ["test"])
     status_by_camera = status_frame.set_index("camera_id")
     assert status_by_camera.loc["bogor-kab-pdam2", "status"] == CAMERA_STATUS_COUNTED

@@ -97,7 +97,7 @@ def main() -> None:
         assert not ready_test.exception, [item.value for item in ready_test.exception]
         assert len(ready_test.metric) == 4, len(ready_test.metric)
         assert len(ready_test.warning) == 0, [item.value for item in ready_test.warning]
-        assert len(ready_test.dataframe) == 6, len(ready_test.dataframe)
+        assert len(ready_test.dataframe) == 5, len(ready_test.dataframe)
         chart_elements = ready_test.get("vega_lite_chart")
         assert len(chart_elements) == 1, len(chart_elements)
         metric_values = [item.value for item in ready_test.metric]

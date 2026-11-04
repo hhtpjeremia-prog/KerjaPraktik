@@ -67,11 +67,9 @@ BOX_COUNT_CONTRACT = {
     "jumlah_box_lampu_silau_dan_berwarna_mobil": ["MobilSilauBerwarna"],
     "jumlah_box_lampu_silau_dan_berwarna_motor": ["MotorSilauBerwarna"],
 }
-UNMEASURABLE_COUNT_CONTRACT_KEYS = [
-    contract_key
-    for contract_key, contract_classes in COUNT_CONTRACT.items()
-    if not set(contract_classes) & set(TRAINING_CLASS_NAMES)
-]
+# NB06 requires the attribute classifier, so it can measure all eight contracts.
+# The detector's five classes only limit NB05's box-per-frame baseline.
+UNMEASURABLE_COUNT_CONTRACT_KEYS = []
 UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS = [
     contract_key
     for contract_key, contract_classes in BOX_COUNT_CONTRACT.items()

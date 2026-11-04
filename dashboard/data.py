@@ -24,6 +24,9 @@ DEFAULT_NB06_ROOT = PROJECT_ROOT / "output" / "nb06"
 NB06_ROOT_ENV_VAR = "NB06_ROOT"
 COUNTING_SUMMARY_FILENAME = "counting_summary.json"
 COUNTING_BY_VIDEO_FILENAME = "counting_by_video.csv"
+COUNTING_TIMELINE_FILENAME = "counting_timeline.csv"
+OVERLAY_MANIFEST_FILENAME = "overlay_manifest.json"
+EVENT_CLIP_MANIFEST_FILENAME = "event_clip_manifest.json"
 EXPECTED_ARTIFACT_NAMES = (COUNTING_SUMMARY_FILENAME, COUNTING_BY_VIDEO_FILENAME)
 
 CAMERA_ID_COLUMN = "camera_id"
@@ -62,6 +65,9 @@ class CountingSnapshot:
     summary: dict | None = None
     per_video_frame: pd.DataFrame | None = None
     camera_table: pd.DataFrame | None = None
+    timeline_frame: pd.DataFrame | None = None
+    overlay_manifest: list[dict] | None = None
+    event_clip_manifest: list[dict] | None = None
     missing_artifacts: tuple[str, ...] = ()
     error_message: str | None = None
 
@@ -178,10 +184,25 @@ def load_counting_snapshot(nb06_root: Path | None = None) -> CountingSnapshot:
             missing_artifacts=missing_artifacts,
             error_message=str(artifact_error),
         )
+    timeline_frame = None
+    timeline_path = nb06_root / COUNTING_TIMELINE_FILENAME
+    if timeline_path.exists():
+        timeline_frame = pd.read_csv(timeline_path)
+    overlay_manifest = None
+    manifest_path = nb06_root / OVERLAY_MANIFEST_FILENAME
+    if manifest_path.exists():
+        overlay_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    event_clip_manifest = None
+    event_clip_manifest_path = nb06_root / EVENT_CLIP_MANIFEST_FILENAME
+    if event_clip_manifest_path.exists():
+        event_clip_manifest = json.loads(event_clip_manifest_path.read_text(encoding="utf-8"))
     return CountingSnapshot(
         state=STATE_READY,
         summary=summary_payload,
         per_video_frame=per_video_frame,
         camera_table=build_camera_table(per_video_frame),
+        timeline_frame=timeline_frame,
+        overlay_manifest=overlay_manifest,
+        event_clip_manifest=event_clip_manifest,
         missing_artifacts=missing_artifacts,
     )

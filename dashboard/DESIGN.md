@@ -46,6 +46,11 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
 
 ## Siklus state wajib
 
+Playback adalah lapisan presentasi di atas artefak NB06, bukan sumber angka baru. Video dipilih
+dari `overlay_manifest.json`; jumlah kumulatif dihitung dari `counting_timeline.csv` berdasarkan
+`first_frame` tiap `vehicle_id`, sehingga satu kendaraan tidak dihitung berulang karena muncul di
+banyak frame. Slider posisi disediakan sebagai mode audit yang deterministik.
+
 Halaman tidak boleh hanya menangani jalur bahagia. Empat state ini harus ada dan terlihat beda:
 
 | State | Pemicu | Tampilan |

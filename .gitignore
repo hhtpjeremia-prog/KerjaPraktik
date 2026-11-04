@@ -1,0 +1,81 @@
+# === Secrets & Kredensial (Wajib Aman) ===
+.env
+.env.*
+*.key
+*.pem
+*.cert
+*.crt
+id_rsa
+id_rsa.pub
+
+# === Environment & Dependency Lokal ===
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# === Python Compilations & Caches ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# === IDE, Editor, & Tooling Lokal ===
+.vscode/
+.idea/
+.agents/
+.streamlit/
+*.sublime-project
+*.sublime-workspace
+
+# === Jupyter Notebook Checkpoints & Scraps ===
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# === Model Weights, Checkpoints, & Engine Binaries ===
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.engine
+*.tflite
+*.weights
+*.h5
+*.pkl
+*.joblib
+
+# === Dataset Berat & Anotasi Ekstra (Biarkan Script yang Unduh) ===
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+
+# === Log Dumps, Session Dumps, & Audit Internal ===
+codex-session-*.md
+path_audit.txt
+AUDIT_*.md
+*.log
+runs/
+wandb/
+
+# === Tracking & Pipeline Outputs ===
+output/
+kritik-saran/
+
+# === OS & System Artifacts ===
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+

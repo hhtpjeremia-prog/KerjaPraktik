@@ -1,0 +1,14 @@
+# ByteTrack untuk NB06.
+# Ambang asosiasi diturunkan sampai sama dengan lantai deteksi NB06 (CONF_FLOOR = 0.05).
+# Alasannya: ambang per kelas hasil kalibrasi NB05 boleh serendah 0.05, sedangkan ByteTrack
+# bawaan hanya memulai track pada 0.25. Selisih itu membuat kelas langka tidak pernah punya
+# track dan jumlahnya kurang terhitung secara sistematis.
+# Penyaringan akhir tetap dilakukan ambang per kelas NB05 saat agregasi track, jadi tracker
+# hanya mengurus asosiasi antar frame.
+tracker_type: bytetrack
+track_high_thresh: 0.05
+track_low_thresh: 0.02
+new_track_thresh: 0.05
+track_buffer: 30
+match_thresh: 0.80
+fuse_score: True

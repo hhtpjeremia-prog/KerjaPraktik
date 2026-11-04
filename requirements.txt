@@ -1,0 +1,17 @@
+# PyTorch CUDA 12.4 wheels; replace these two pins with CPU wheels on CPU-only machines.
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+transformers==5.12.1
+ultralytics==8.4.112
+opencv-contrib-python==5.0.0.93
+pandas==2.3.3
+numpy==2.3.5
+pillow==13.0.0
+matplotlib==3.11.2
+nbformat==5.10.4
+ipympl==0.10.0
+ipywidgets==8.1.8
+ipykernel==6.29.5
+PyYAML==6.0.3
+streamlit==1.66.1

@@ -6,6 +6,14 @@
 **Revisi terakhir:** 2026-10-18 (ROI final + approval user, model DINO
 ditetapkan, koreksi dokumentasi P1)
 
+> **Snapshot kanonik 2026-11-05.** Anotasi aktif berisi 194 frame dan 2.082 box COCO dalam 9
+> kelas: `MobilNormal 220`, `MobilSilau 193`, `MobilBerwarna 73`, `MobilSilauBerwarna 39`,
+> `MotorNormal 382`, `MotorSilau 501`, `MotorBerwarna 102`, `MotorSilauBerwarna 35`,
+> `PantulanCahaya 537`. COCO/store mempertahankan 9 kelas. NB04 sengaja memakai 5 kelas
+> detector; NB04b memakai dua atribut multi-label (`silau`, `berwarna`), lalu NB06 membentuk
+> event final. Angka lama seperti 170 frame, 1.897 box, 0 box warna, atau 2 kandidat train
+> adalah snapshot historis sebelum anotasi aktif terakhir.
+
 ---
 
 ## 0. Ringkasan Revisi

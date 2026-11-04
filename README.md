@@ -4,6 +4,16 @@ Pipeline riset untuk menghitung kondisi lampu kendaraan (silau, berwarna, silau+
 jumlah kendaraan unik mobil/motor dari rekaman CCTV. Tujuh notebook di root **dibangun** dari
 `builders/build_nb*.py`; jangan edit `.ipynb` langsung, edit builder lalu regenerasi.
 
+## Kontrak label dan model
+
+Anotasi gold dan COCO mempertahankan 9 kelas: `Mobil/Motor × Normal/Silau/Berwarna/SilauBerwarna`
+serta `PantulanCahaya`. NB04 sengaja memakai 5 kelas detector (`MobilNormal`, `MobilSilau`,
+`MotorNormal`, `MotorSilau`, `PantulanCahaya`). NB04b memakai classifier multi-label untuk dua
+atribut independen, `silau` dan `berwarna`; NB06 menggabungkannya menjadi event final.
+
+Jadi export YOLO 5 kelas bukan penghapusan anotasi berwarna. Untuk memeriksa kelas berwarna,
+gunakan `annotations.json`/`annotations_coco.json`, metrik NB04b, dan keluaran event NB06.
+
 ## Menyiapkan environment
 
 ```powershell
@@ -166,6 +176,16 @@ warna dan tipografi hanya berasal dari [.streamlit/config.toml](.streamlit/confi
 
 `output/nb06/counting_by_video.csv` memuat kolom `camera_id`, `video_stem`, `vehicles_counted`,
 sembilan kolom kelas, dan delapan kolom kontrak; dashboard menjumlahkannya per titik CCTV.
+
+Overlay NB06 memakai warna event final: putih/abu = normal, oranye = silau, cyan = berwarna,
+magenta = silau+berwarna, dan abu redup = pantulan. Label teks/confidence/track ID mati secara
+default untuk presentasi. Set `NB06_OVERLAY_LABELS=1` untuk mode debug.
+
+NB06 juga menulis `counting_timeline.csv` (satu baris per kendaraan hasil tracking) dan
+`overlay_manifest.json` (video, FPS, durasi, dan path overlay). Dashboard memakai keduanya untuk
+playback serta counting kumulatif berdasarkan posisi timeline. NB06 juga membuat clip overlay per
+kendaraan di `output/nb06/event_clips/<kelas>/` dan indeksnya di `event_clip_manifest.json`; tab
+Footage per kelas memakai indeks tersebut untuk membuka footage berdasarkan `vehicle_id`.
 
 ## Artefak
 

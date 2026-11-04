@@ -1,5 +1,10 @@
 # Risk Register — Riset-HampirMatang
 
+> **Status kanonik 2026-11-05:** anotasi aktif = 194 frame / 2.082 box COCO / 9 kelas.
+> COCO/store mempertahankan kelas berwarna. NB04 sengaja memakai 5 kelas detector, sedangkan
+> NB04b memakai dua atribut multi-label dan NB06 membentuk event final. Catatan lama tentang
+> 0 kelas berwarna atau 2 kandidat train adalah snapshot historis.
+
 > Dokumen manajemen risiko pipeline pseudo-labeling CCTV (Arsitektur V2: Grounding DINO → YOLO).
 > Disusun **sebelum** perbaikan isu B1–H10, sebagai kontrol perubahan dan acuan gate.
 > Sumber temuan: review 8 agent (code-reviewer, clean-code-engineer, python-debug-engineer, data-science-advanced, machine-learning-terapan, deep-learning-advanced, docs-writer, test-engineer).

@@ -57,6 +57,7 @@ __pycache__/
 
 # === Log Dumps, Session Dumps, & Audit Internal ===
 codex-session-*.md
+session-*.json
 path_audit.txt
 AUDIT_*.md
 *.log

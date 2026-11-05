@@ -157,8 +157,18 @@ def render_playback(snapshot: CountingSnapshot) -> None:
         )
         return
     manifest_frame = pd.DataFrame(snapshot.overlay_manifest)
-    camera_options = ["Semua titik"] + sorted(manifest_frame["camera_id"].unique().tolist())
-    selected_camera = st.selectbox("Titik CCTV", camera_options, key="playback_camera")
+    counted_splits = set(snapshot.summary.get("counted_splits", []))
+    counted_cameras = sorted(
+        manifest_frame.loc[manifest_frame["split"].isin(counted_splits), "camera_id"].unique().tolist()
+    )
+    other_cameras = sorted(
+        set(manifest_frame["camera_id"].unique().tolist()) - set(counted_cameras)
+    )
+    camera_options = ["Semua titik", *counted_cameras, *other_cameras]
+    default_camera_index = 1 if counted_cameras else 0
+    selected_camera = st.selectbox(
+        "Titik CCTV", camera_options, index=default_camera_index, key="playback_camera"
+    )
     filtered_manifest = manifest_frame if selected_camera == "Semua titik" else manifest_frame[manifest_frame["camera_id"] == selected_camera]
     if filtered_manifest.empty:
         st.info("Tidak ada video overlay untuk titik ini.")
@@ -177,6 +187,13 @@ def render_playback(snapshot: CountingSnapshot) -> None:
     video_timeline = snapshot.timeline_frame[
         snapshot.timeline_frame["video_stem"] == selected_video
     ].copy()
+    if video_timeline.empty:
+        st.warning("Belum ada event tracking pada video ini.")
+    elif video_row["split"] not in set(snapshot.summary.get("counted_splits", [])):
+        st.info(
+            f"Video ini berasal dari split `{video_row['split']}`. Counting yang tampil adalah "
+            "mode presentasi/inspeksi, bukan angka resmi evaluasi test."
+        )
     max_frame = max(int(video_row["frames_processed"]) - 1, 0)
     selected_frame = st.slider(
         "Posisi counting timeline (frame)", 0, max_frame, 0, key=f"playback_frame_{selected_video}"

@@ -385,7 +385,7 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
     frame_index = 0
     overlay_path = OVERLAY_DIR / f"{job['video_stem']}_overlay.mp4"
     overlay_writer = cv2.VideoWriter(
-        str(overlay_path), cv2.VideoWriter_fourcc(*"mp4v"),
+        str(overlay_path), cv2.VideoWriter_fourcc(*"avc1"),
         float(job["fps"]), (int(job["width"]), int(job["height"])),
     )
     if not overlay_writer.isOpened():
@@ -611,6 +611,33 @@ timeline_frame["fps"] = timeline_frame["video_stem"].map(
 )
 timeline_frame["first_timestamp_seconds"] = timeline_frame["first_frame"] / timeline_frame["fps"]
 timeline_frame["last_timestamp_seconds"] = timeline_frame["last_frame"] / timeline_frame["fps"]
+timeline_frame["scope"] = timeline_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
+    lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
+)
+timeline_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
+
+presentation_qualified_frame = qualify_by_class_threshold(tracking_frame)
+presentation_track_frame = summarise_units(presentation_qualified_frame, "track_id")
+presentation_stitch_lookup = stitch_track_fragments(presentation_track_frame)
+presentation_vehicle_detections = presentation_qualified_frame.merge(
+    presentation_stitch_lookup, on=["video_stem", "track_id"], how="left"
+)
+presentation_vehicle_frame = summarise_units(presentation_vehicle_detections, "vehicle_id")
+presentation_counted_vehicle_frame = presentation_vehicle_frame[
+    presentation_vehicle_frame["hits"] >= MIN_TRACK_HITS
+].copy()
+presentation_timeline_frame = presentation_counted_vehicle_frame.rename(columns={"unit_id": "vehicle_id"})[
+    ["video_stem", "camera_id", "vehicle_id", "class_name", "hits", "first_frame", "last_frame", "mean_score"]
+].copy()
+presentation_timeline_frame["fps"] = presentation_timeline_frame["video_stem"].map(
+    {row.video_stem: float(row.fps) for row in scan_frame.itertuples()}
+)
+presentation_timeline_frame["first_timestamp_seconds"] = presentation_timeline_frame["first_frame"] / presentation_timeline_frame["fps"]
+presentation_timeline_frame["last_timestamp_seconds"] = presentation_timeline_frame["last_frame"] / presentation_timeline_frame["fps"]
+presentation_timeline_frame["scope"] = presentation_timeline_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
+    lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
+)
+timeline_frame = presentation_timeline_frame
 timeline_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
 
 class_counts = {
@@ -679,7 +706,7 @@ for overlay_info in overlay_manifest:
         clip_path = class_directory / f"{event.video_stem}_vehicle_{int(event.vehicle_id):05d}.mp4"
         overlay_capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         clip_writer = cv2.VideoWriter(
-            str(clip_path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
+            str(clip_path), cv2.VideoWriter_fourcc(*"avc1"), fps,
             (int(overlay_capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(overlay_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))),
         )
         if not clip_writer.isOpened():

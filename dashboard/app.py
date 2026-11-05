@@ -51,6 +51,14 @@ CLASS_LABELS = {
     "PantulanCahaya": "Pantulan cahaya",
 }
 
+EVENT_COLORS = {
+    "Normal": "#F4F4F4",
+    "Silau": "#FF9F1C",
+    "Berwarna": "#00B8D9",
+    "SilauBerwarna": "#D946EF",
+    "PantulanCahaya": "#9CA3AF",
+}
+
 STYLE_BLOCK = """
 <style>
 [data-testid="stMetricValue"] {
@@ -180,10 +188,6 @@ def render_playback(snapshot: CountingSnapshot) -> None:
     video_path = Path(video_row["overlay_path"])
     if not video_path.is_absolute():
         video_path = PROJECT_ROOT / video_path
-    if video_path.exists():
-        st.video(str(video_path))
-    else:
-        st.warning(f"File overlay belum ditemukan: `{video_path}`")
     video_timeline = snapshot.timeline_frame[
         snapshot.timeline_frame["video_stem"] == selected_video
     ].copy()
@@ -201,17 +205,33 @@ def render_playback(snapshot: CountingSnapshot) -> None:
     fps = float(video_row["fps"])
     st.caption(f"Posisi: {selected_frame / fps:.1f} detik dari {float(video_row['duration_seconds']):.1f} detik")
     visible_timeline = video_timeline[video_timeline["first_frame"] <= selected_frame]
-    count_columns = st.columns(5)
-    count_columns[0].metric("Kendaraan sampai posisi", format_count(len(visible_timeline)))
+    video_column, count_column = st.columns([1.55, 1], gap="large")
+    with video_column:
+        st.markdown("#### Video overlay")
+        if video_path.exists():
+            st.video(str(video_path))
+        else:
+            st.warning(f"File overlay belum ditemukan: `{video_path}`")
+    with count_column:
+        st.markdown("#### Counting aktif")
+        count_columns = st.columns(2)
+        count_columns[0].metric("Kendaraan", format_count(len(visible_timeline)))
+        count_columns[1].metric(
+            "Mobil", format_count(int(visible_timeline["class_name"].str.startswith("Mobil").sum()))
+        )
     event_groups = {
         "Normal": {"MobilNormal", "MotorNormal"},
         "Silau": {"MobilSilau", "MotorSilau"},
         "Berwarna": {"MobilBerwarna", "MotorBerwarna"},
         "Silau + berwarna": {"MobilSilauBerwarna", "MotorSilauBerwarna"},
     }
-    for column, (label, classes) in zip(count_columns[1:], event_groups.items()):
-        value = int(visible_timeline["class_name"].isin(classes).sum())
-        column.metric(label, format_count(value))
+    with count_column:
+        count_columns = st.columns(2)
+        for column, (label, classes) in zip(count_columns, event_groups.items()):
+            value = int(visible_timeline["class_name"].isin(classes).sum())
+            column.metric(label, format_count(value))
+        st.markdown("**Arti warna bbox dan tipe kendaraan**")
+        render_class_legend()
     class_counts = visible_timeline["class_name"].value_counts().reindex(CLASS_NAMES, fill_value=0)
     st.bar_chart(pd.DataFrame({"Jumlah": class_counts}, index=[CLASS_LABELS[name] for name in CLASS_NAMES]), height=240)
     if not visible_timeline.empty:
@@ -220,6 +240,28 @@ def render_playback(snapshot: CountingSnapshot) -> None:
             hide_index=True,
             width="stretch",
         )
+
+
+def render_class_legend() -> None:
+    legend_rows = []
+    for class_name in CLASS_NAMES:
+        if class_name == "PantulanCahaya":
+            suffix = "PantulanCahaya"
+        elif "SilauBerwarna" in class_name:
+            suffix = "SilauBerwarna"
+        elif "Silau" in class_name:
+            suffix = "Silau"
+        elif "Berwarna" in class_name:
+            suffix = "Berwarna"
+        else:
+            suffix = "Normal"
+        vehicle = "Mobil" if class_name.startswith("Mobil") else "Motor" if class_name.startswith("Motor") else "—"
+        legend_rows.append(
+            f'<div style="display:flex;align-items:center;gap:.45rem;margin:.2rem 0;">'
+            f'<span style="width:12px;height:12px;border-radius:3px;background:{EVENT_COLORS[suffix]};display:inline-block;border:1px solid #777;"></span>'
+            f'<span>{CLASS_LABELS[class_name]} <small>({vehicle})</small></span></div>'
+        )
+    st.markdown("".join(legend_rows), unsafe_allow_html=True)
 
 
 def render_model_validation(snapshot: CountingSnapshot) -> None:
@@ -257,11 +299,12 @@ def render_model_validation(snapshot: CountingSnapshot) -> None:
 
 
 def render_event_footage(snapshot: CountingSnapshot) -> None:
-    st.subheader("Footage event per kelas")
+    st.subheader("Galeri crop event")
+    st.caption("Setiap item hanya menampilkan crop bbox kendaraan agar event mudah dibandingkan.")
     if not snapshot.event_clip_manifest:
         st.info(
-            "Clip event belum tersedia. Jalankan NB06 versi terbaru untuk membuat "
-            "`event_clip_manifest.json` dan folder `event_clips/`."
+            "Event belum tersedia. Jalankan NB06 versi terbaru untuk membuat "
+            "`event_clip_manifest.json` dan folder `event_crops/`."
         )
         return
     clips = pd.DataFrame(snapshot.event_clip_manifest)
@@ -277,11 +320,10 @@ def render_event_footage(snapshot: CountingSnapshot) -> None:
     if filtered.empty:
         st.info("Tidak ada footage untuk filter tersebut.")
         return
-    display_frame = filtered[[
-        "class_name", "camera_id", "video_stem", "vehicle_id", "first_frame", "last_frame", "hits", "mean_score"
-    ]].copy()
-    display_frame["class_name"] = display_frame["class_name"].map(CLASS_LABELS)
-    st.dataframe(display_frame, hide_index=True, width="stretch")
+    filtered = filtered.reset_index(drop=True)
+    st.caption(f"{len(filtered)} event cocok dengan filter.")
+    render_event_gallery(filtered)
+    return
     selected_index = st.selectbox(
         "Pilih vehicle ID untuk membuka footage",
         filtered.index.tolist(),
@@ -299,6 +341,55 @@ def render_event_footage(snapshot: CountingSnapshot) -> None:
         st.video(str(clip_path))
     else:
         st.warning(f"File clip belum ditemukan: `{clip_path}`")
+
+
+def render_event_gallery(filtered: pd.DataFrame) -> None:
+    gallery_tab, grid_tab = st.tabs(["Detail event", "Grid 8 × 8"])
+    with gallery_tab:
+        if "gallery_index" not in st.session_state or st.session_state.gallery_index >= len(filtered):
+            st.session_state.gallery_index = 0
+        selected_index = st.session_state.gallery_index
+        selected_clip = filtered.iloc[selected_index]
+        crop_path = Path(str(selected_clip.get("crop_path", "")))
+        if not crop_path.is_absolute():
+            crop_path = PROJECT_ROOT / crop_path
+        image_column, detail_column = st.columns([1.25, 1], gap="large")
+        with image_column:
+            if crop_path.exists():
+                st.image(str(crop_path), caption=f"ID {selected_clip['vehicle_id']} · {CLASS_LABELS.get(selected_clip['class_name'], selected_clip['class_name'])}", width="stretch")
+            else:
+                st.warning(f"Crop belum ditemukan: `{crop_path}`. Rerun NB06 terbaru diperlukan.")
+        with detail_column:
+            class_name = str(selected_clip["class_name"])
+            vehicle_type = "Mobil" if class_name.startswith("Mobil") else "Motor"
+            st.markdown(f"### {CLASS_LABELS.get(class_name, class_name)}")
+            st.write(f"**ID kendaraan:** {selected_clip['vehicle_id']}")
+            st.write(f"**Jenis kendaraan:** {vehicle_type}")
+            st.write(f"**CCTV:** {selected_clip['camera_id']}")
+            st.write(f"**Menit:** {float(selected_clip.get('timestamp_seconds', 0)) / 60:.2f}")
+            st.write(f"**Frame:** {selected_clip['first_frame']}–{selected_clip['last_frame']}")
+            st.write(f"**Confidence rata-rata:** {float(selected_clip['mean_score']) * 100:.1f}%")
+            previous_column, next_column = st.columns(2)
+            if previous_column.button("← Sebelumnya", disabled=selected_index == 0, use_container_width=True):
+                st.session_state.gallery_index = max(0, selected_index - 1)
+                st.rerun()
+            if next_column.button("Berikutnya →", disabled=selected_index == len(filtered) - 1, use_container_width=True):
+                st.session_state.gallery_index = min(len(filtered) - 1, selected_index + 1)
+                st.rerun()
+    with grid_tab:
+        page_count = max(1, (len(filtered) - 1) // 64 + 1)
+        page = st.number_input("Halaman grid", min_value=1, max_value=page_count, value=1, step=1, key="gallery_page")
+        page_frame = filtered.iloc[(page - 1) * 64: page * 64]
+        st.caption(f"Menampilkan {len(page_frame)} crop pada halaman {page}/{page_count}.")
+        for start in range(0, len(page_frame), 8):
+            columns = st.columns(8, gap="small")
+            for column, (_, item) in zip(columns, page_frame.iloc[start:start + 8].iterrows()):
+                item_path = Path(str(item.get("crop_path", "")))
+                if not item_path.is_absolute():
+                    item_path = PROJECT_ROOT / item_path
+                with column:
+                    if item_path.exists():
+                        st.image(str(item_path), caption=f"ID {item['vehicle_id']}\n{CLASS_LABELS.get(item['class_name'], item['class_name'])}", use_container_width=True)
 
 
 def render_camera_section(snapshot: CountingSnapshot) -> None:

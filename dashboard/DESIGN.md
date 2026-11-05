@@ -16,7 +16,7 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
 | Format numbers like a product | **Dipakai** — `format_count()` di `dashboard/data.py` |
 | Spacing rhythm (base 8) | **Dipakai** — jarak antar blok selalu `st.divider()` atau grid `st.columns`, tidak ada padding manual |
 | Shadows for elevation logic | **Dibuang** — Streamlit `border=True` sudah jadi satu-satunya elevasi |
-| Semantic colors, light + dark | **Dipakai sebagian** — semua warna lewat `.streamlit/config.toml`, tidak ada hex di kode UI |
+| Semantic colors, light + dark | **Dipakai sebagian** — tema UI berasal dari `.streamlit/config.toml`; warna event bbox adalah pengecualian semantik yang dipetakan eksplisit agar warna Normal/Silau/Berwarna/SilauBerwarna tetap konsisten dengan overlay |
 | Native controls, SF Symbols, haptics, motion, navigation, simulator loop | **Dibuang** — tidak ada padanannya di Streamlit. Jangan dipaksakan. |
 
 ## Token terkunci
@@ -36,7 +36,9 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
    Emoji hanya boleh muncul di dalam teks penjelasan bila benar-benar perlu.
 3. **Tanpa ikon dari keluarga campuran.** Belum ada ikon sama sekali; label teks lebih baik
    daripada tiga keluarga ikon.
-4. **Tanpa warna hardcoded di `app.py`.** Warna hanya dari `.streamlit/config.toml`.
+4. **Tanpa warna dekoratif hardcoded di `app.py`.** Warna event semantik boleh dipetakan eksplisit di
+   legend karena harus identik dengan warna bbox NB06; warna dekoratif UI tetap berasal dari
+   `.streamlit/config.toml`.
 5. **Satu label per maksud.** "Kendaraan dihitung" dipakai konsisten; jangan berganti menjadi
    "total unit", "jumlah mobil+motor", atau "kendaraan masuk" untuk hal yang sama.
 6. **Angka tidak boleh berbohong.** Nilai `"n/a"` tetap `n/a`, tidak pernah diubah menjadi `0`.
@@ -50,6 +52,12 @@ Playback adalah lapisan presentasi di atas artefak NB06, bukan sumber angka baru
 dari `overlay_manifest.json`; jumlah kumulatif dihitung dari `counting_timeline.csv` berdasarkan
 `first_frame` tiap `vehicle_id`, sehingga satu kendaraan tidak dihitung berulang karena muncul di
 banyak frame. Slider posisi disediakan sebagai mode audit yang deterministik.
+
+Playback dan counting ditampilkan side-by-side. Legend warna bbox bersifat permanen dan menjelaskan
+keluarga kendaraan (mobil/motor) serta event cahaya. Galeri event memakai crop bbox dari
+`event_crops/`, dengan filter kelas/CCTV, detail event, navigasi sequential, dan grid 8×8. Video
+full-frame pada `event_clips/` tetap boleh disimpan sebagai konteks audit, tetapi bukan tampilan
+utama galeri untuk end user.
 
 Halaman tidak boleh hanya menangani jalur bahagia. Empat state ini harus ada dan terlihat beda:
 

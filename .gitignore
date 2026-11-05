@@ -60,6 +60,7 @@ codex-session-*.md
 session-*.json
 path_audit.txt
 AUDIT_*.md
+*.docx
 *.log
 runs/
 wandb/

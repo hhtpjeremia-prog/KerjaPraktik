@@ -177,9 +177,9 @@ def build_body() -> str:
               bullet("Delapan angka kontrak kondisi lampu."),
               bullet("Status kamera: dihitung atau di luar split counting."),
               heading("Playback dan timeline", 2),
-              paragraph("Video overlay dapat diputar. Counting timeline menggunakan vehicle_id dan first_frame sehingga satu kendaraan tidak dihitung berulang. Slider posisi disediakan untuk audit deterministik."),
+              paragraph("Video overlay dan counting ditampilkan side-by-side. Counting timeline menggunakan vehicle_id dan first_frame sehingga satu kendaraan tidak dihitung berulang. Slider posisi disediakan untuk audit deterministik. Train/val dapat ditampilkan sebagai presentation_only, sedangkan counting resmi tetap memakai test."),
               heading("Footage per kelas", 2),
-              paragraph("NB06 menghasilkan clip overlay per kendaraan di folder event_clips. Dashboard dapat memfilter kelas, CCTV, video ID, dan vehicle ID lalu membuka clip kendaraan tersebut."),
+              paragraph("NB06 menghasilkan video konteks di event_clips dan crop bbox di event_crops. Dashboard memakai crop bbox sebagai galeri: filter kelas/CCTV, detail ID, jenis kendaraan, menit, frame, tombol sebelumnya/berikutnya, serta grid 8×8."),
               heading("Visualisasi kelas", 2),
               paragraph("Warna visual harus konsisten antara bbox dan chart: putih/abu untuk normal, oranye untuk silau, cyan untuk berwarna, magenta untuk silau+berwarna, dan abu redup untuk pantulan."),
               heading("Panel performa", 2),
@@ -189,9 +189,9 @@ def build_body() -> str:
               page_break()]
 
     parts += [heading("9. Artefak penting", 1),
-              table([["Artefak", "Fungsi"], ["output/annotation/annotations.json", "Store anotasi manual lengkap."], ["output/annotation/annotations_coco.json", "Anotasi format COCO dengan 9 kelas."], ["output/annotation/yolo/labels", "Label detector YOLO dengan kontrak 5 kelas."], ["output/attribute_classifier/best.pt", "Bobot classifier atribut silau/berwarna."], ["output/nb04/.../best.pt", "Bobot detector YOLO."], ["output/nb05/thresholds.json", "Threshold confidence detector."], ["output/nb06/tracking_detections.csv", "Deteksi per frame yang memiliki track."], ["output/nb06/track_summary.csv", "Ringkasan track dan kelas."], ["output/nb06/counting_timeline.csv", "Satu baris per kendaraan untuk timeline."], ["output/nb06/overlay_manifest.json", "Daftar video overlay, FPS, durasi, dan path."], ["output/nb06/event_clip_manifest.json", "Daftar clip per event/vehicle ID."], ["output/nb06/counting_summary.json", "Ringkasan counting dan kontrak angka."]], [3600, 5500]),
+              table([["Artefak", "Fungsi"], ["output/annotation/annotations.json", "Store anotasi manual lengkap."], ["output/annotation/annotations_coco.json", "Anotasi format COCO dengan 9 kelas."], ["output/annotation/yolo/labels", "Label detector YOLO dengan kontrak 5 kelas."], ["output/attribute_classifier/best.pt", "Bobot classifier atribut silau/berwarna."], ["output/nb04/.../best.pt", "Bobot detector YOLO."], ["output/nb05/thresholds.json", "Threshold confidence detector."], ["output/nb06/tracking_detections.csv", "Deteksi per frame yang memiliki track."], ["output/nb06/track_summary.csv", "Ringkasan track dan kelas."], ["output/nb06/counting_timeline.csv", "Satu baris per kendaraan untuk timeline; scope resmi/presentasi."], ["output/nb06/overlay_manifest.json", "Daftar video overlay, FPS, durasi, split, dan path."], ["output/nb06/event_clip_manifest.json", "Daftar event per vehicle ID."], ["output/nb06/event_crops/<kelas>/*.jpg", "Crop bbox untuk galeri dashboard."], ["output/nb06/counting_summary.json", "Ringkasan counting dan kontrak angka."]], [3600, 5500]),
               heading("Status rerun terakhir", 2),
-              paragraph("Builder NB06 terbaru telah diregenerasi dan test kode/dashboard telah lolos. NB06 full perlu dijalankan ulang untuk menghasilkan timeline, manifest, dan clip event berdasarkan builder terbaru. Karena itu angka pada artefak NB06 lama tidak otomatis menjadi hasil final setelah perubahan builder."),
+              paragraph("Builder NB06 terbaru telah diregenerasi dan test kode/dashboard telah lolos. NB06 full perlu dijalankan ulang untuk menghasilkan timeline, manifest, crop event, dan overlay berdasarkan builder terbaru. Bug threshold kelas berwarna sudah diperbaiki: kelas turunan memakai threshold kelas dasar YOLO. Karena itu angka pada artefak NB06 lama tidak otomatis menjadi hasil final setelah perubahan builder."),
               page_break()]
 
     parts += [heading("10. Risiko dan pertanyaan untuk dosen pembimbing", 1),

@@ -14,6 +14,13 @@ ditetapkan, koreksi dokumentasi P1)
 > event final. Angka lama seperti 170 frame, 1.897 box, 0 box warna, atau 2 kandidat train
 > adalah snapshot historis sebelum anotasi aktif terakhir.
 
+> **Implementasi dashboard/NB06 2026-11-05.** NB06 memproses video terbaru setiap kamera dan
+> membedakan scope `official` untuk split `test` dari `presentation_only` untuk `train`/`val`.
+> Threshold kelas turunan berwarna dipetakan ke threshold kelas dasar YOLO agar tidak terbuang saat
+> counting. Overlay memakai warna event final dan label kecil `ID <track_id> · <confidence>%` secara
+> default. Dashboard menampilkan video dan counting side-by-side serta galeri crop bbox pada
+> `event_crops/`; video `event_clips/` disimpan sebagai konteks audit.
+
 ---
 
 ## 0. Ringkasan Revisi

@@ -1,7 +1,7 @@
 # Riset-HampirMatang
 
 Pipeline riset untuk menghitung kondisi lampu kendaraan (silau, berwarna, silau+berwarna) dan
-jumlah kendaraan unik mobil/motor dari rekaman CCTV. Tujuh notebook di root **dibangun** dari
+jumlah kendaraan unik mobil/motor dari rekaman CCTV. Delapan notebook pipeline di root **dibangun** dari
 `builders/build_nb*.py`; jangan edit `.ipynb` langsung, edit builder lalu regenerasi.
 
 ## Kontrak label dan model
@@ -37,7 +37,9 @@ mengandalkan `from pipeline_common import ...` tanpa mengubah `sys.path`).
 5. `NB04_train_yolo.ipynb` — latih detector kendaraan dengan split per kamera.
 6. `NB04b_attribute_classifier.ipynb` — latih classifier piksel multi-label untuk silau/berwarna.
 7. `NB05_evaluation.ipynb` — kalibrasi cakupan detector di split `val`.
-8. `NB06_tracking_count.ipynb` — ROI-masked full-frame + classifier atribut + ByteTrack di split `test`.
+8. `NB06_tracking_count.ipynb` — ROI-masked full-frame + classifier atribut + ByteTrack pada video terbaru
+   setiap kamera. Counting resmi memakai split `test`; timeline dan overlay `train`/`val` juga dibuat untuk
+   presentasi/inspeksi dengan scope `presentation_only`, bukan evaluasi resmi.
 
 NB02b sekarang mensyaratkan jarak minimum 30 frame antar frame sampel dalam kamera yang sama
 (sekitar 1,2 detik pada 25 fps). Manifest sampling lama akan ditolak dan harus dibuat ulang agar
@@ -178,14 +180,20 @@ warna dan tipografi hanya berasal dari [.streamlit/config.toml](.streamlit/confi
 sembilan kolom kelas, dan delapan kolom kontrak; dashboard menjumlahkannya per titik CCTV.
 
 Overlay NB06 memakai warna event final: putih/abu = normal, oranye = silau, cyan = berwarna,
-magenta = silau+berwarna, dan abu redup = pantulan. Label teks/confidence/track ID mati secara
-default untuk presentasi. Set `NB06_OVERLAY_LABELS=1` untuk mode debug.
+magenta = silau+berwarna, dan abu redup = pantulan. Label overlay aktif secara default dan hanya
+menampilkan `ID <track_id> · <confidence>%` dalam ukuran kecil di pojok bbox. Set
+`NB06_OVERLAY_LABELS=0` bila label ingin dimatikan.
 
 NB06 juga menulis `counting_timeline.csv` (satu baris per kendaraan hasil tracking) dan
-`overlay_manifest.json` (video, FPS, durasi, dan path overlay). Dashboard memakai keduanya untuk
-playback serta counting kumulatif berdasarkan posisi timeline. NB06 juga membuat clip overlay per
-kendaraan di `output/nb06/event_clips/<kelas>/` dan indeksnya di `event_clip_manifest.json`; tab
-Footage per kelas memakai indeks tersebut untuk membuka footage berdasarkan `vehicle_id`.
+`overlay_manifest.json` (video, FPS, durasi, split, dan path overlay). Dashboard memakai keduanya untuk
+playback serta counting kumulatif berdasarkan posisi timeline. Dashboard menampilkan video dan counting
+secara side-by-side, dengan legend permanen yang menjelaskan warna dan tipe kendaraan.
+
+NB06 membuat dua bentuk artefak event: video konteks di `event_clips/<kelas>/` dan crop bbox pada
+`event_crops/<kelas>/`. Galeri dashboard memakai crop bbox, bukan full-frame clip, dan menyediakan
+filter kelas/CCTV, detail event, navigasi sebelumnya/berikutnya, serta grid 8×8. Video overlay yang
+tidak dapat diputar browser dapat dikonversi melalui cell terakhir NB06 ke `overlays_browser/` dengan
+codec AVC1; video sumber tidak dihapus.
 
 ## Artefak
 

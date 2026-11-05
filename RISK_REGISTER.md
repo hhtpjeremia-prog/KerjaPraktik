@@ -5,16 +5,21 @@
 > NB04b memakai dua atribut multi-label dan NB06 membentuk event final. Catatan lama tentang
 > 0 kelas berwarna atau 2 kandidat train adalah snapshot historis.
 
+> **Koreksi kontrak aktif 2026-11-05:** proyek tidak memakai YOLO 2 kelas. Anotasi/COCO memiliki 9
+> kelas final; YOLO memakai 5 kelas detector dasar; NB04b memprediksi dua atribut multi-label dan
+> NB06 membentuk event 9 kelas untuk tracking/counting. Catatan historis di bawah yang menyebut
+> `YOLO 2 kelas` atau taksonomi lama harus dibaca sebagai snapshot audit, bukan keadaan aktif.
+>
 > Dokumen manajemen risiko pipeline pseudo-labeling CCTV (Arsitektur V2: Grounding DINO → YOLO).
 > Disusun **sebelum** perbaikan isu B1–H10, sebagai kontrol perubahan dan acuan gate.
 > Sumber temuan: review 8 agent (code-reviewer, clean-code-engineer, python-debug-engineer, data-science-advanced, machine-learning-terapan, deep-learning-advanced, docs-writer, test-engineer).
 
 | Field | Nilai |
 |---|---|
-| Proyek | Riset-HampirMatang (CCTV Kab. Bogor → Grounding DINO → YOLO 2 kelas) |
-| Versi dokumen | 1.17 |
-| Tanggal | 2026-10-26 |
-| Status pipeline saat ini | NB01 selesai · ROI final & disetujui · Model `grounding-dino-tiny` · **NB02 selesai (1.482 gambar / 2.018 box YOLO) — output ditandai `UNSplit`, peta split ditulis** · **NB02b (anotasi manual) dibuat — bebas kamera `test`, punya 3 kelas termasuk `PantulanCahaya` (hard-negative) + toggle label** · Konverter `golden_set_v3` Riset-4 → COCO dibuat (199 box / 182 frame) · **NB03–NB05 dibuat & diverifikasi 2026-10-26** (NB03 jalan pada gold 126 frame; NB04 materialisasi split 660/182/640 selesai, training tertahan guard karena val belum dianotasi; NB05 lolos smoke test dengan bobot 1-epoch) · ⛔ **Audit 2026-10-26: taksonomi TIDAK SELARAS dengan tujuan riset** (target = silau / berwarna / silau+berwarna + sistem hitung; kode masih jenis kendaraan) — lihat **R14** |
+| Proyek | Riset-HampirMatang (CCTV Kab. Bogor → Grounding DINO → YOLO 5 kelas dasar + NB04b atribut) |
+| Versi dokumen | 1.18 |
+| Tanggal | 2026-11-05 |
+| Status pipeline saat ini | Snapshot aktif: NB01–NB05 dan classifier atribut tersedia; anotasi gold/COCO 194 frame, 2.082 box, 9 kelas; YOLO memakai 5 kelas dasar; NB04b memprediksi `silau`/`berwarna`; NB06 dan dashboard sudah memiliki kontrak event final, tracking/counting, overlay berwarna, timeline official/presentation, serta galeri crop. Artefak NB06 harus dianggap stale sampai rerun builder terbaru. Risiko metodologis yang tetap terbuka: test belum memiliki ground truth counting lengkap. |
 | Cakupan | B1–H10 (temuan review) + risiko proyek (dokumentasi, testing, reproducibility, metode FM) |
 | Pemilik | User (pemilik riset) |
 | Aturan | Perbaikan kode TIDAK dimulai sebelum kontrol §6 dijalankan |

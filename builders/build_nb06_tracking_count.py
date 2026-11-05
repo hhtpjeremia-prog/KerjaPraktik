@@ -14,7 +14,7 @@ from notebook_gate import verify_code_cells
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_NOTEBOOK = PROJECT_ROOT / "NB06_tracking_count.ipynb"
 
-EXPECTED_CODE_CELL_COUNT = 5
+EXPECTED_CODE_CELL_COUNT = 6
 EXPECTED_MARKDOWN_CELL_COUNT = 1
 
 NAVBAR_MARKDOWN = """# NB06 — Hitung Kendaraan Unik (ByteTrack, hanya di dalam ROI)
@@ -117,6 +117,7 @@ from IPython.display import Markdown, display
 from pipeline_common import (
     CLASS_NAMES,
     TRAINING_CLASS_NAMES,
+    TRAINING_CLASS_BY_ANNOTATION_CLASS,
     COUNT_CONTRACT,
     UNMEASURABLE_COUNT_CONTRACT_KEYS,
     FRAGMENT_DISTANCE_RATIO,
@@ -154,13 +155,15 @@ COUNTING_SUMMARY_PATH = NB06_ROOT / "counting_summary.json"
 COUNTING_TIMELINE_PATH = NB06_ROOT / "counting_timeline.csv"
 OVERLAY_MANIFEST_PATH = NB06_ROOT / "overlay_manifest.json"
 EVENT_CLIPS_DIR = NB06_ROOT / "event_clips"
+EVENT_CROPS_DIR = NB06_ROOT / "event_crops"
 EVENT_CLIP_MANIFEST_PATH = NB06_ROOT / "event_clip_manifest.json"
 MAPPING_AUDIT_PATH = NB06_ROOT / "roi_mapping_audit.csv"
 FRAGMENT_MERGES_PATH = NB06_ROOT / "fragment_merges.csv"
 FIGURE_PATH = NB06_ROOT / "counting_bar.png"
 OVERLAY_DIR = NB06_ROOT / "overlays"
 EVENT_CLIPS_DIR.mkdir(parents=True, exist_ok=True)
-OVERLAY_LABELS = os.environ.get("NB06_OVERLAY_LABELS", "0") == "1"
+EVENT_CROPS_DIR.mkdir(parents=True, exist_ok=True)
+OVERLAY_LABELS = os.environ.get("NB06_OVERLAY_LABELS", "1") == "1"
 
 NB06_ROOT.mkdir(parents=True, exist_ok=True)
 OVERLAY_DIR.mkdir(parents=True, exist_ok=True)
@@ -233,6 +236,15 @@ if not TRACKER_CONFIG_PATH.exists():
     raise FileNotFoundError(f"konfigurasi tracker tidak ada: {TRACKER_CONFIG_PATH}")
 thresholds_payload = load_json_document(THRESHOLDS_PATH)
 selected_thresholds = thresholds_payload["selected_thresholds"]
+effective_thresholds = {
+    class_name: float(
+        selected_thresholds.get(
+            TRAINING_CLASS_BY_ANNOTATION_CLASS.get(class_name, class_name),
+            selected_thresholds.get(class_name, 0.25),
+        )
+    )
+    for class_name in CLASS_NAMES
+}
 missing_thresholds = [class_name for class_name in TRAINING_CLASS_NAMES if class_name not in selected_thresholds]
 if missing_thresholds:
     raise ValueError(f"ambang confidence belum ada untuk kelas: {missing_thresholds}")
@@ -316,9 +328,9 @@ from attribute_classifier import decode_attributes, extract_pixel_features, load
 RAW_BOX_DECIMALS = 2
 SCORE_DECIMALS = 4
 LABEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
-LABEL_FONT_SCALE = 0.5
+LABEL_FONT_SCALE = 0.38
 LABEL_THICKNESS = 1
-LABEL_PADDING = 4
+LABEL_PADDING = 2
 
 
 def rectangles_overlap(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> bool:
@@ -451,7 +463,7 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                         overlay_color = EVENT_COLORS_BGR.get(event_suffix, EVENT_COLORS_BGR["PantulanCahaya"])
                         cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), overlay_color, 2)
                         if OVERLAY_LABELS:
-                            overlay_label = f"{box_scores[box_index] * 100:.0f}%"
+                            overlay_label = f"ID {track_id} · {box_scores[box_index] * 100:.0f}%"
                             draw_debug_label(
                                 overlay_frame, overlay_label, overlay_color,
                                 (x1, y1, x2, y2),
@@ -536,7 +548,9 @@ if not SMOKE_MODE and total_tracked == 0 and total_untracked > 0:
 COUNT_SOURCE = '''def qualify_by_class_threshold(detection_frame: pd.DataFrame) -> pd.DataFrame:
     if detection_frame.empty:
         return detection_frame.copy()
-    threshold_series = detection_frame["class_name"].map(selected_thresholds)
+    # Kelas berwarna adalah hasil NB04b, sehingga memakai threshold detector
+    # dari pasangan kelas dasarnya (Normal/Silau), bukan NaN.
+    threshold_series = detection_frame["class_name"].map(effective_thresholds)
     return detection_frame[detection_frame["score"] >= threshold_series].copy()
 
 
@@ -626,8 +640,14 @@ presentation_vehicle_frame = summarise_units(presentation_vehicle_detections, "v
 presentation_counted_vehicle_frame = presentation_vehicle_frame[
     presentation_vehicle_frame["hits"] >= MIN_TRACK_HITS
 ].copy()
+timeline_columns = [
+    "video_stem", "camera_id", "vehicle_id", "class_name", "hits",
+    "first_frame", "last_frame", "mean_score",
+    "first_x1", "first_y1", "first_x2", "first_y2",
+    "last_x1", "last_y1", "last_x2", "last_y2",
+]
 presentation_timeline_frame = presentation_counted_vehicle_frame.rename(columns={"unit_id": "vehicle_id"})[
-    ["video_stem", "camera_id", "vehicle_id", "class_name", "hits", "first_frame", "last_frame", "mean_score"]
+    timeline_columns
 ].copy()
 presentation_timeline_frame["fps"] = presentation_timeline_frame["video_stem"].map(
     {row.video_stem: float(row.fps) for row in scan_frame.itertuples()}
@@ -689,6 +709,7 @@ OVERLAY_MANIFEST_PATH.write_text(
 )
 
 event_clip_manifest = []
+video_path_by_stem = {job["video_stem"]: job["video_path"] for job in scan_jobs}
 for overlay_info in overlay_manifest:
     video_events = timeline_frame[timeline_frame["video_stem"] == overlay_info["video_stem"]]
     if video_events.empty:
@@ -698,12 +719,28 @@ for overlay_info in overlay_manifest:
         raise RuntimeError(f"overlay tidak bisa dibuka untuk clip event: {overlay_info['overlay_path']}")
     fps = float(overlay_info["fps"])
     total_frames = int(overlay_info["frames_processed"])
+    source_capture = cv2.VideoCapture(video_path_by_stem[overlay_info["video_stem"]])
+    if not source_capture.isOpened():
+        overlay_capture.release()
+        raise RuntimeError(f"video sumber tidak bisa dibuka untuk crop event: {video_path_by_stem[overlay_info['video_stem']]}")
     for event in video_events.itertuples(index=False):
         start_frame = max(0, int(event.first_frame) - int(fps))
         end_frame = min(total_frames - 1, int(event.last_frame) + int(fps))
         class_directory = EVENT_CLIPS_DIR / str(event.class_name)
         class_directory.mkdir(parents=True, exist_ok=True)
+        crop_directory = EVENT_CROPS_DIR / str(event.class_name)
+        crop_directory.mkdir(parents=True, exist_ok=True)
         clip_path = class_directory / f"{event.video_stem}_vehicle_{int(event.vehicle_id):05d}.mp4"
+        crop_path = crop_directory / f"{event.video_stem}_vehicle_{int(event.vehicle_id):05d}.jpg"
+        source_capture.set(cv2.CAP_PROP_POS_FRAMES, int(event.first_frame))
+        crop_ok, source_frame = source_capture.read()
+        if crop_ok:
+            crop_x1 = max(0, min(int(round(event.first_x1)), source_frame.shape[1] - 1))
+            crop_y1 = max(0, min(int(round(event.first_y1)), source_frame.shape[0] - 1))
+            crop_x2 = max(crop_x1 + 1, min(int(round(event.first_x2)), source_frame.shape[1]))
+            crop_y2 = max(crop_y1 + 1, min(int(round(event.first_y2)), source_frame.shape[0]))
+            crop_image = source_frame[crop_y1:crop_y2, crop_x1:crop_x2]
+            cv2.imwrite(str(crop_path), crop_image)
         overlay_capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         clip_writer = cv2.VideoWriter(
             str(clip_path), cv2.VideoWriter_fourcc(*"avc1"), fps,
@@ -733,9 +770,12 @@ for overlay_info in overlay_manifest:
                 "start_frame": start_frame,
                 "end_frame": end_frame,
                 "clip_path": str(clip_path),
+                "crop_path": str(crop_path) if crop_path.exists() else "",
+                "timestamp_seconds": round(float(event.first_frame) / fps, 3),
                 "duration_seconds": round(written_frames / fps, 3),
             })
     overlay_capture.release()
+    source_capture.release()
 EVENT_CLIP_MANIFEST_PATH.write_text(
     json.dumps(event_clip_manifest, indent=2, ensure_ascii=False), encoding="utf-8"
 )
@@ -835,7 +875,7 @@ contract_lines = "\\n".join(
     f"| {contract_key} | {counting_totals[contract_key]} |" for contract_key in COUNT_CONTRACT
 )
 class_lines = "\\n".join(
-    f"| `{class_name}` | {class_counts[class_name]} |" for class_name in TRAINING_CLASS_NAMES
+    f"| `{class_name}` | {class_counts[class_name]} |" for class_name in CLASS_NAMES
 )
 
 display(Markdown(
@@ -879,6 +919,105 @@ aplikasi model, bukan akurasi terverifikasi.
 ))'''
 
 
+CONVERT_OVERLAY_SOURCE = '''import os
+import json
+from pathlib import Path
+
+import cv2
+from IPython.display import Markdown, display
+
+
+# Cell mandiri: hanya mengonversi overlay yang sudah ada agar bisa diputar browser.
+# Video sumber tidak dihapus dan tidak disentuh.
+RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
+OUTPUT_ROOT = RISET_ROOT / "output"
+SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"
+DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
+NB06_ROOT = DATA_ROOT / "nb06"
+OVERLAY_MANIFEST_PATH = NB06_ROOT / "overlay_manifest.json"
+BROWSER_OVERLAY_DIR = NB06_ROOT / "overlays_browser"
+
+if not OVERLAY_MANIFEST_PATH.exists():
+    raise FileNotFoundError(
+        f"Manifest belum ditemukan: {OVERLAY_MANIFEST_PATH}. "
+        "Jalankan NB06 sampai cell summary terlebih dahulu."
+    )
+
+overlay_manifest = json.loads(OVERLAY_MANIFEST_PATH.read_text(encoding="utf-8"))
+manifest_is_list = isinstance(overlay_manifest, list)
+if manifest_is_list:
+    overlay_rows = overlay_manifest
+else:
+    overlay_rows = overlay_manifest.get("overlays", [])
+BROWSER_OVERLAY_DIR.mkdir(parents=True, exist_ok=True)
+
+converted_rows = []
+for item in overlay_rows:
+    source = Path(item["overlay_path"])
+    if not source.is_absolute():
+        source = (RISET_ROOT / source).resolve()
+    if not source.exists():
+        raise FileNotFoundError(f"Overlay sumber tidak ditemukan: {source}")
+
+    target = BROWSER_OVERLAY_DIR / source.name
+    capture = cv2.VideoCapture(str(source))
+    if not capture.isOpened():
+        raise RuntimeError(f"Overlay tidak bisa dibaca: {source}")
+
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0)
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    expected_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    writer = cv2.VideoWriter(
+        str(target), cv2.VideoWriter_fourcc(*"avc1"), fps, (width, height)
+    )
+    if not writer.isOpened():
+        capture.release()
+        raise RuntimeError(
+            "Writer AVC1 tidak tersedia pada environment ini. "
+            "Cek instalasi OpenCV/codec sebelum mengulang cell."
+        )
+
+    written_frames = 0
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        writer.write(frame)
+        written_frames += 1
+    capture.release()
+    writer.release()
+
+    if written_frames == 0 or not target.exists() or target.stat().st_size == 0:
+        raise RuntimeError(f"Konversi gagal atau menghasilkan file kosong: {target}")
+    if expected_frames and written_frames != expected_frames:
+        raise RuntimeError(
+            f"Jumlah frame berubah untuk {source.name}: "
+            f"{expected_frames} menjadi {written_frames}"
+        )
+
+    converted_item = dict(item)
+    converted_item["overlay_path"] = str(target)
+    converted_item["codec"] = "avc1"
+    converted_item["source_overlay_path"] = str(source)
+    converted_rows.append(converted_item)
+
+if manifest_is_list:
+    manifest_to_write = converted_rows
+else:
+    manifest_to_write = dict(overlay_manifest)
+    manifest_to_write["overlays"] = converted_rows
+    manifest_to_write["browser_compatible_dir"] = str(BROWSER_OVERLAY_DIR)
+OVERLAY_MANIFEST_PATH.write_text(
+    json.dumps(manifest_to_write, indent=2, ensure_ascii=False), encoding="utf-8"
+)
+
+display(Markdown(
+    f"**Selesai:** {len(converted_rows)} overlay dikonversi ke AVC1 di "
+    f"`{BROWSER_OVERLAY_DIR}`. Video asli tetap ada di folder `overlays`."
+))'''
+
+
 def build_notebook() -> nbformat.NotebookNode:
     notebook_cells = [
         nbformat.v4.new_markdown_cell(NAVBAR_MARKDOWN),
@@ -887,6 +1026,7 @@ def build_notebook() -> nbformat.NotebookNode:
         nbformat.v4.new_code_cell(TRACK_SOURCE),
         nbformat.v4.new_code_cell(COUNT_SOURCE),
         nbformat.v4.new_code_cell(SUMMARY_SOURCE),
+        nbformat.v4.new_code_cell(CONVERT_OVERLAY_SOURCE),
     ]
     return nbformat.v4.new_notebook(
         cells=notebook_cells,

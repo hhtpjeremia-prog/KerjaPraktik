@@ -1,25 +1,38 @@
 # Master Dokumentasi — Riset HampirMatang
 
+> **Status dokumen:** bagian-bagian setelah ringkasan memuat catatan historis. **Kontrak model aktif 2026-11-13:** detector YOLO dan Grounding DINO/FM memiliki tiga kelas (`Mobil`, `Motor`, `PantulanCahaya`); CNN ResNet18+fitur HSV memiliki tiga label (`Standar`, `TidakStandar`, `PantulanCahaya`). Pantulan dilatih/dievaluasi, tetapi dikeluarkan sebelum ByteTrack serta tidak digambar atau dihitung sebagai kendaraan di NB06. Pernyataan kontrak biner di bawah sudah superseded. Perbaikan ROI dan rerun sebelumnya: [PONYTAIL_REMEDIATION_2026-11-12.md](PONYTAIL_REMEDIATION_2026-11-12.md).
+
+
 **Proyek:** Deteksi Lampu Kendaraan Malam Hari di Jalan Raya Kabupaten Bogor
 **Dataset:** `CCTV Kab Bogor_ Raya Lintang Kita (Rawamurang) (2026-08-01)`
 **Repo lokal:** `TugasJere/KerjaPraktik/Riset-HampirMatang/`
-**Revisi terakhir:** 2026-10-18 (ROI final + approval user, model DINO
-ditetapkan, koreksi dokumentasi P1)
+**Revisi terakhir:** 2026-11-13 (fine-tune FM, tiga kelas detector/CNN, pantulan disaring di NB06)
 
-> **Snapshot kanonik 2026-11-05.** Anotasi aktif berisi 194 frame dan 2.082 box COCO dalam 9
-> kelas: `MobilNormal 220`, `MobilSilau 193`, `MobilBerwarna 73`, `MobilSilauBerwarna 39`,
-> `MotorNormal 382`, `MotorSilau 501`, `MotorBerwarna 102`, `MotorSilauBerwarna 35`,
-> `PantulanCahaya 537`. COCO/store mempertahankan 9 kelas. NB04 sengaja memakai 5 kelas
-> detector; NB04b memakai dua atribut multi-label (`silau`, `berwarna`), lalu NB06 membentuk
-> event final. Angka lama seperti 170 frame, 1.897 box, 0 box warna, atau 2 kandidat train
-> adalah snapshot historis sebelum anotasi aktif terakhir.
+> **Audit tindak lanjut 2026-11-12.** Lihat `PONYTAIL_REMEDIATION_2026-11-12.md` untuk matriks temuan/perbaikan dan batas verifikasi. Temuan ROI menunjukkan 81 entri metadata anotasi memiliki ukuran lama, sementara koordinat bbox sesuai gambar ROI aktif; metadata store/COCO dan export YOLO lokal telah diperbaiki tanpa menggeser bbox. NB06 kini mendeteksi pada crop ROI seperti saat training lalu memetakan bbox ke frame penuh. Karena label YOLO ternormalisasi berubah, jalankan NB03 lalu NB04, NB04b, NB05, dan NB06 untuk menghasilkan artefak yang konsisten. Training ulang bukan bukti kualitas; evaluasi hasil baru tetap diperlukan.
 
-> **Implementasi dashboard/NB06 2026-11-05.** NB06 memproses video terbaru setiap kamera dan
+> **Kontrak aktif sebelumnya (2026-11-12; superseded 2026-11-13).** Annotation store sudah dimigrasikan ke 4 kelas kendaraan/kondisi:
+> `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`. `PantulanCahaya`
+> tetap disimpan untuk audit, tetapi saat ini tidak menjadi target YOLO atau hard-negative berlabel khusus. YOLO mendeteksi
+> `Mobil`/`Motor`, classifier supervised memprediksi `Standar`/`TidakStandar`, dan NB06 menghitung
+> bbox `TidakStandar` per frame. Semua uraian 9-kelas, enam metrik kondisi, dan jumlah kendaraan unik pada bagian historis bukan kontrak aktif.
+
+> **Model dan evaluasi aktif (2026-11-13).** YOLO/FM memakai tiga kelas deteksi `Mobil`, `Motor`,
+> `PantulanCahaya`; NB04b memakai ResNet18+fitur HSV dengan weighted CrossEntropy untuk tiga label
+> `Standar`, `TidakStandar`, `PantulanCahaya`. Pantulan dievaluasi lalu disaring sebelum ByteTrack,
+> overlay, dan counting. Train/val memilih model; test GT hanya untuk evaluasi akhir.
+
+> **Implementasi dashboard/NB06 2026-11-06.** NB06 memproses video terbaru setiap kamera dan
 > membedakan scope `official` untuk split `test` dari `presentation_only` untuk `train`/`val`.
-> Threshold kelas turunan berwarna dipetakan ke threshold kelas dasar YOLO agar tidak terbuang saat
-> counting. Overlay memakai warna event final dan label kecil `ID <track_id> · <confidence>%` secara
-> default. Dashboard menampilkan video dan counting side-by-side serta galeri crop bbox pada
-> `event_crops/`; video `event_clips/` disimpan sebagai konteks audit.
+> Artefak `counting_timeline.csv` kini satu baris per bbox tidak standar per frame. Overlay hanya
+> menggambar bbox tidak standar merah dengan label kecil `ID <track_id> · <confidence>%`. Dashboard
+> menampilkan video/counting side-by-side dan galeri crop bbox pada `event_crops/`.
+
+> **Status verifikasi source per 2026-11-06 (snapshot historis; lihat pembaruan 2026-11-12 di atas).** Builder NB02b, NB03, NB04, NB05, NB04b, dan NB06
+> berhasil membangun notebook setelah perbaikan taxonomy/gate. NB05 menghasilkan baseline detector
+> dua kelas. Source compile, 17 logic checks, dan dashboard state checks lolos. Belum ada training
+> atau inferensi penuh pada artefak refactor ini; hasil model baru belum tersedia. Sebelum rerun,
+> pertahankan `annotations.json` hasil migrasi dan seluruh sumber video/frame/crop. Jalankan export
+> NB02b (bukan sampling/anotasi ulang), kemudian NB03 → NB04 → NB04b → NB05 → NB06.
 
 ---
 
@@ -165,63 +178,52 @@ diperbaiki).
 
 ---
 
-## 1. Tujuan Riset
+## 1. Tujuan dan kontrak pipeline aktif
 
-Mendeteksi **lampu kendaraan pada rekaman CCTV malam** dan mengklasifikasikan
-**kondisi** lampu tersebut ke dalam tiga kategori yang menjadi fokus riset:
+Pipeline ini menganalisis rekaman CCTV malam untuk mendeteksi kendaraan dan mengidentifikasi
+kondisi lampu sebagai `Standar` atau `TidakStandar`, terpisah untuk mobil dan motor. Ini adalah
+klasifikasi visual berbasis data kamera; tanpa pengukuran fotometrik langsung, hasilnya tidak
+membuktikan kepatuhan terhadap ambang candela/lux dalam regulasi.
 
-1. **lampu kendaraan yang silau** — sumber cahaya yang menyilaukan (luapan
-   cahaya / bloom besar pada sensor);
-2. **lampu kendaraan yang berwarna** — lampu yang tidak tampil putih standar
-   (mis. biru, merah, hijau, ungu, kuning pekat);
-3. **lampu kendaraan yang silau dan berwarna** — memenuhi kedua kriteria
-   sekaligus.
+### Label dan peran model
 
-Output akhir terdiri dari dua lapis:
+| Tahap | Keluaran aktif | Penjelasan |
+|---|---|---|
+| Store anotasi / COCO | `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`, `PantulanCahaya` | Lima kelas anotasi manual yang menjadi sumber target supervised. |
+| YOLO dan FM | `Mobil`, `Motor`, `PantulanCahaya` | Empat label kendaraan dipetakan menjadi tipe; pantulan menjadi kelas detector ketiga. |
+| NB04b classifier | `Standar`, `TidakStandar`, `PantulanCahaya` | ResNet18 pretrained menggabungkan citra dengan 35 fitur numerik HSV/statistik piksel; memakai weighted CrossEntropy. |
+| NB06 | kelas hasil per bbox | Jenis dari YOLO digabung dengan kondisi classifier pada track ByteTrack; prediksi kondisi dicache per track dalam video. |
 
-1. **Deteksi** — bounding box per kejadian lampu `(x, y, width, height)`
-   beserta kelas kondisinya.
-2. **Sistem hitung** — agregasi per frame / per jam / per kamera:
+### Satuan angka dan evaluasi
 
-| Keluaran hitung | Turunan |
-|---|---|
-| Jumlah kendaraan mobil | semua kelas `Mobil*` |
-| Jumlah kendaraan motor | semua kelas `Motor*` |
-| Jumlah lampu silau — mobil / motor | `MobilSilau`, `MotorSilau` (+ rollup `*SilauBerwarna`) |
-| Jumlah lampu berwarna — mobil / motor | `MobilBerwarna`, `MotorBerwarna` (+ rollup) |
-| Jumlah lampu silau + berwarna — mobil / motor | `MobilSilauBerwarna`, `MotorSilauBerwarna` |
+Hitungan resmi NB06 adalah **bbox TidakStandar per frame** pada video split `test`. Kendaraan
+sama yang terlihat pada beberapa frame dapat menyumbang beberapa bbox. `track_id` mendukung audit
+antar-frame, tetapi angka utama bukan jumlah kendaraan unik. Overlay hanya menggambar bbox
+TidakStandar dengan warna merah; dashboard menampilkan kelas dan hitungan di luar overlay.
 
-Kontrak agregasi lengkap ada di **§10.6**. Satuan hitung (per kendaraan vs per
-lampu fisik) masih terbuka di **§13.10**.
+NB05 mengukur deteksi tipe kendaraan Mobil/Motor dan mengkalibrasi threshold dari validation.
+NB04/04b melatih model; validation membantu pemilihan model/threshold; test hanya untuk pengukuran
+akhir setelah ground truth NB02c direview. Metrik test tidak tersedia bila ground truth belum cukup.
+Kurva train/validation per epoch bukan akurasi test. MSE/RMSE untuk classifier mengukur error
+probabilitas label multiclass (Brier score/root Brier); error koordinat/ukuran bbox dilaporkan terpisah.
 
-**Dimensi kondisi** (3 kategori riset yang wajib dibedakan):
+### ROI, preprocessing, dan batas interpretasi
 
-| Kondisi | Definisi |
-|---|---|
-| `Silau` | menyilaukan, warna dasar putih/normal |
-| `Berwarna` | berwarna, tidak menyilaukan |
-| `SilauBerwarna` | menyilaukan **dan** berwarna |
+Training detector dan inferensi NB06 memakai crop ROI yang sama. NB06 memetakan bbox pada crop
+kembali ke koordinat frame penuh untuk overlay. Audit 12 November 2026 menemukan dimensi metadata
+store lama pada 81 frame; koordinat bbox sesuai gambar ROI aktif sehingga bbox tidak digeser.
+Metadata store/COCO dan export YOLO lokal sudah diperbaiki dengan backup. Karena normalisasi label
+berubah, model detector dan classifier perlu dilatih ulang sebelum hasil baru dipakai.
 
-**Dimensi jenis kendaraan:** `Mobil`, `Motor`.
+Crop CNN menjaga rasio aspek: sisi terpanjang diubah ke 224 px lalu diberi padding, bukan
+stretch/center-crop. Pixel RGB dinormalisasi dengan mean/std ImageNet. Fitur numerik dihitung dari
+crop bersih dan dinormalisasi memakai statistik train; ColorJitter hanya diterapkan pada cabang
+citra CNN saat training. Fitur HSV adalah proksi dari video yang dapat dipengaruhi exposure, white
+balance, blur, dan kompresi; ia bukan alat ukur intensitas cahaya fisik.
 
-> Kelas model yang dilatih adalah **kombinasi kedua dimensi** — 8 kelas
-> `{Mobil,Motor} × {Normal,Silau,Berwarna,SilauBerwarna}` — karena "jumlah
-> kendaraan mobil/motor" hanya bisa dihitung bila lampu normal pun terdeteksi.
-> Opsi label space dan konsekuensinya: **§13.9**. `PantulanCahaya` dipertahankan
-> sebagai hard-negative dan tidak pernah dihitung.
-
-> **Definisi operasional label ditetapkan 2026-10-28 — lihat §13.9a.** Ringkasnya:
-> "silau" dinilai dari **bentuk luapan cahaya** (bukan ambang fotometrik, yang
-> terbukti tidak memisahkan), "berwarna" hanya **lampu depan berwarna biru/cyan**,
-> dan kasus ragu → `BelumDitentukan`.
-
-> ✅ **Status keselarasan implementasi (diperbarui 2026-10-28): SELARAS DI KODE,
-> BELUM DI DATA.** NB02b–NB06 sudah memakai 9 kelas kondisi lampu
-> (`{Mobil,Motor} × {Normal,Silau,Berwarna,SilauBerwarna}` + `PantulanCahaya`),
-> bukan lagi `LampuMobil`/`LampuMotor`. Yang belum: dua kelas berwarna hampir
-> kosong (`MobilBerwarna` 0 box, `MotorBerwarna` 4, `MotorSilauBerwarna` 2 dari
-> 1.125 box), dan set contoh acuan "silau" belum dibuat. Bukti per notebook:
-> **§10.6**; konsekuensi data: **§13.9a**.
+Kelas Silau/Berwarna dan rencana reference patches pada bagian historis tidak menjadi target model
+aktif. Rujuk README untuk urutan rerun, `PONYTAIL_REMEDIATION_2026-11-12.md` untuk audit/perbaikan,
+dan `RISK_REGISTER.md` untuk status risiko yang sudah disaring.
 
 ---
 
@@ -1056,17 +1058,13 @@ penjumlahan:
 
 Sampai langkah 1–2 selesai: **jangan** latih NB04 dan **jangan** kutip angka NB05.
 
-### 10.6.1 Tindak Lanjut Audit 2026-10-28
+### 10.6.1 Tindak Lanjut Audit 2026-10-28 (kontrak lama; diperbarui 2026-11-12)
 
 Audit 19 temuan (`AUDIT_ACTION_2026-10-28.md`) menemukan satu kebocoran makna: NB05
-dan NB06 menerbitkan kunci JSON yang sama (`jumlah_kendaraan_*`) dengan satuan
-berbeda. Perbaikannya:
+dan NB06 menerbitkan kunci lama (`jumlah_kendaraan_*`) dengan satuan berbeda (catatan sejarah; nama kunci aktif sekarang memakai `jumlah_bbox_*`). Perbaikannya:
 
-- **NB05** menerbitkan `box_totals` dengan kunci `jumlah_box_*` + penanda
-  `counting_unit: "box_per_frame"`. Sel hitung tetap ada sebagai pemeriksaan
-  cakupan/keseimbangan kelas, **bukan** angka populasi.
-- **NB06** tetap satu-satunya pemilik `counting_totals` / `jumlah_kendaraan_*`
-  (kendaraan unik). `smoke_pipeline.py` memvalidasi kedua kontrak secara terpisah.
+- **NB05** melaporkan bbox detector `Mobil` dan `Motor` yang lolos threshold; hasilnya bukan hitungan kondisi lampu.
+- **NB06** menerbitkan `counting_totals` dengan `jumlah_bbox_mobil_tidak_standar` dan `jumlah_bbox_motor_tidak_standar`. Unitnya bbox per frame; `unique_vehicles_audit` terpisah untuk audit tracking.
 
 Sumber tunggal yang baru (`pipeline_common.py`): `CLASS_NAMES`,
 `SPLIT_NAME_BY_CAMERA`, `COUNT_CONTRACT`, `BOX_COUNT_CONTRACT`,
@@ -1076,20 +1074,17 @@ tanpa GPU lewat `test_pipeline_logic.py`.
 
 ---
 
-### 10.7 NB06 — Hitung Kendaraan Unik (Ditambahkan 2026-10-26)
+### 10.7 NB06 — Hitung Kendaraan Unik (catatan historis; superseded 2026-11-06)
+
+> Seluruh deskripsi satuan/angka pada bagian ini menjelaskan rancangan lama. Unit aktif adalah bbox TidakStandar per frame; lihat README.
+
 
 **Pemicu.** §13.11. NB05 menjumlahkan box per **frame sampel** (1 dari setiap 15
 frame), sehingga satu kendaraan muncul di puluhan frame dan terhitung puluhan
 kali. Pemilik riset menetapkan satuan yang benar: **satu kendaraan dihitung satu
 kali, sejak muncul di dalam ROI sampai keluar dari ROI.**
 
-**Posisi stage.**
-
-```
-NB02 (lokalisasi lampu) -> NB02b (anotasi gold) -> NB03 (audit + fotometri)
-  -> NB04 (training) -> NB05 (kalibrasi ambang + baseline per frame)
-  -> NB06 (kendaraan unik)  <- angka resmi "jumlah kendaraan"
-```
+**Posisi stage pada catatan historis tersebut.** Kontrak aktif saat ini menghitung bbox TidakStandar per frame, bukan kendaraan unik. Lihat README untuk urutan dan satuan aktif.
 
 **Kenapa stage terpisah, bukan menumpang NB05.** Tracking butuh frame
 **berurutan**. NB01 hanya menyimpan 1 dari setiap 15 frame (0,6 detik pada 25
@@ -1160,7 +1155,7 @@ diam-diam.
 |---|---|
 | `tracking_detections.csv` | satu baris per deteksi per frame (termasuk koordinat frame asli) |
 | `track_summary.csv` | satu baris per track: kelas hasil mayoritas, `hits`, `first_frame`, `last_frame`, `mean_score` |
-| `counting_by_video.csv` | 8 angka kontrak per video + `vehicles_counted` + sembilan kolom kelas |
+| `counting_by_video.csv` | Satu baris per video test; deteksi per kelas, `bbox_counted`, serta dua kontrak bbox TidakStandar. Tidak ada kolom `vehicles_counted`. |
 | `counting_summary.json` | agregat + `duplication_factor_vs_per_frame` + ambang yang dipakai |
 | `fragment_merges.csv` | daftar kendaraan yang terbentuk dari >1 track (bukti penyambungan, untuk diperiksa manual) |
 | `roi_mapping_audit.csv` | bukti offset/scale/crop per video |
@@ -1304,6 +1299,8 @@ Format notebook: `NB<studi>_<nama_tahap>.ipynb` — contoh `NB02_pseudo_label.ip
 > Referensi teknis hasil ekstraksi arsip kursus CV (rumus HSV, skor blur,
 > luas bloom, NMS, GradCAM, dan pola yang ditolak): **`KNOWLEDGE_PIPELINE_CV.md`**.
 
+> **Status bagian:** keputusan Silau/Berwarna berikut adalah eksplorasi historis. Taxonomy aktif 2026-11-12 adalah Standar/TidakStandar per jenis kendaraan; referensi visual lampu berwarna/silau tidak dipakai sebagai kelas output.
+>
 ### 13.9a Definisi Operasional Label (Diputuskan 2026-10-28)
 
 Empat keputusan pemilik riset, menutup §13 butir 9 dan blok "belum ditetapkan" di §1:
@@ -1416,12 +1413,11 @@ menemukan kandidat, tetapi **tidak** menghasilkan data latih yang cukup: 2 box t
 5. **Keputusan strategi kelas berwarna** (menunggu pemilik riset): turunkan target latih ke
    4 kelas `{Mobil,Motor} × {Normal,Silau}` dan laporkan `Berwarna`/`SilauBerwarna` sebagai
    batasan riset; atau tambah sesi rekaman baru yang memuat kendaraan lampu biru.
-6. ~~Bangun set contoh `output/annotation/reference_patches/`.~~ **Bagian selesai 2026-10-28**:
-   builder `builders/build_reference_patches.py` menghasilkan 120 patch (30 silau Mobil/Motor
-   + 30 normal Mobil/Motor, ≤30 per kelas) di `output/annotation/reference_patches/` + index.
-   **Perlu persetujuan pemilik riset** sebelum dipakai sebagai acuan resmi (target relabel ≥ 80%).
+6. **Dibatalkan 2026-11-06:** kelas Silau/Berwarna tidak termasuk taxonomy aktif. `builders/build_reference_patches.py` dihapus; klaim lama bahwa 120 patch telah dihasilkan tidak tervalidasi dan jangan dikutip.
 7. Uji konsistensi relabel patch silau terhadap label lama; Bila di bawah 80%, pertajam aturan.
 
+> **Status bagian:** snapshot audit 2026-10-29; jumlah anotasi/split di bawah bukan distribusi dataset aktif saat ini. Periksa manifest/store terkini sebelum memakai angka.
+>
 ### 13.9b Audit eksternal (Codex) 2026-10-29 dan tindakannya
 
 Bahan: `kritik-saran/PERBAIKAN.md`, `kritik-saran/STRATEGI_PERBAIKAN_NB02_NB02B.md`, dan
@@ -1498,3 +1494,8 @@ berasal dari smoke mode, atau (e) label masih memuat `BelumDitentukan`.
 - Dokumentasi Grounded-SAM resmi: https://github.com/IDEA-Research/Grounded-SAM
   (dikutip 2026-10-15)
 - Riset terkait: Grounded-SAM (lihat RISK_REGISTER.md §5)
+
+
+## Catatan preprocessing CNN NB04b
+
+NB04b mengambil seluruh area dalam bbox kendaraan. Crop di-resize proporsional dengan sisi terpanjang 224 px, kemudian dipadding memakai warna mean ImageNet sampai 224×224. Tidak ada center-crop atau peregangan rasio. Tensor RGB diubah ke rentang 0–1 dan dinormalisasi memakai mean/std ImageNet. Augmentasi train (horizontal flip dan ColorJitter) diterapkan setelah resize/padding; val/test hanya memakai transformasi deterministik yang sama tanpa augmentasi acak. Fitur numerik dihitung dari crop bersih sebelum ColorJitter dan diskalakan memakai statistik train saja; ColorJitter hanya mengubah cabang citra CNN.

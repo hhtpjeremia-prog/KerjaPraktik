@@ -1,5 +1,8 @@
 # Pengetahuan Pipeline CV — Hasil Ekstraksi `Computer-Vision/`
 
+> **Status penerapan (13 November 2026).** Arsip kursus yang diringkas di bawah adalah sumber ide, bukan spesifikasi pipeline. YOLO/FM memakai kelas Mobil, Motor, PantulanCahaya; CNN memakai Standar, TidakStandar, PantulanCahaya. Pantulan dipelajari untuk menekan false positive, lalu disaring sebelum ByteTrack/overlay/counting. Fitur HSV adalah proksi visual, bukan fotometri terkalibrasi. Hitungan resmi tetap bbox per frame.
+
+
 > Sumber: `C:\Users\Jeremmy\LocalProjects\Python_Things\Computer-Vision`
 > Diekstrak: 2026-10-26 · 103 notebook, 14.838 baris kode setelah output/plot dibuang.
 > Skrip ekstraksi ulang: `builders/extract_cv_knowledge.py`.
@@ -20,7 +23,7 @@ Semua pola di bawah sudah diverifikasi ada di kode notebook, bukan dari judul.
 
 ---
 
-## 2. Pola yang diambil dan dipakai
+## 2. Pola yang pernah diambil atau dievaluasi (bukan semuanya aktif)
 
 | # | Pola | Sumber notebook | Dipakai di | Bentuk konkret |
 |---|---|---|---|---|
@@ -77,7 +80,7 @@ Status: **belum diputuskan** — dicatat sebagai keputusan terbuka di MASTER §1
 
 ---
 
-## 6. Lima aturan yang dipakai saat menulis builder
+## 6. Prinsip metodologis umum (bukan klaim implementasi otomatis)
 
 1. **Ukur, jangan tebak.** Setiap klaim atribut ("silau", "berwarna") punya angka pendukung: rasio luas bloom, hue dominan, varian Laplacian.
 2. **Ambang dari `val` saja**, lalu dipakai apa adanya di `test`. Tidak pernah dari train+val gabungan.

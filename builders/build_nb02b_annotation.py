@@ -15,28 +15,24 @@ EXPECTED_MARKDOWN_CELL_COUNT = 1
 
 NAVBAR_MARKDOWN = """# NB02b — Anotasi Manual Kondisi Lampu
 
-Tahap ini mengisi satu-satunya hal yang **tidak boleh** ditebak model: **kondisi lampu**.
+Tahap ini mengisi label manusia untuk kendaraan dan pantulan. Kandidat train/validation mencakup frame curated resmi dan proposal tambahan NB02d yang wajib diperiksa manusia; test tetap dipisahkan untuk ground truth.
 Grounding DINO di NB02 hanya memberi *lokasi* lampu; di sini manusia menetapkan kelasnya.
 
-**Posisi:** `NB01 (akuisisi) → NB02 (crop + pseudo-lokasi) → NB02b (anotasi) → NB03 → NB04 → NB05`
+**Posisi:** `NB01 → NB02 → NB02b (anotasi awal) → NB02d (fine-tune + proposal tambahan) → NB02b (review tambahan) → NB03 → NB04 → NB05 → NB06`
 
-**Sumber gambar:** `output/nb02/crops/*.png` — frame yang sudah ROI-crop + fit 640 px.
-Semua frame unik tersedia di sini, termasuk yang dilewatkan DINO, sehingga frame tanpa
-deteksi tetap bisa dianotasi dari nol.
+**Sumber gambar:** frame ROI-crop dari `output/nb02/crops/` dan proposal tambahan ROI-crop dari
+`output/nb02d/crops/`. Frame baru tetap ditampilkan meskipun FM tidak mengusulkan bbox, sehingga
+anotator dapat menandainya sebagai frame negatif setelah pemeriksaan.
 
-## Sembilan kelas (hotkey `1`–`9`)
+## Kelas anotasi (hotkey `1`–`5`)
 
 | Hotkey | Kelas | Arti |
 |---|---|---|
-| 1 | `MobilNormal` | mobil, lampu tidak silau dan tidak berwarna |
-| 2 | `MobilSilau` | mobil, lampu menyilaukan, warna dasar normal |
-| 3 | `MobilBerwarna` | mobil, lampu depan biru/cyan, tidak menyilaukan |
-| 4 | `MobilSilauBerwarna` | mobil, lampu depan biru/cyan **dan** menyilaukan |
-| 5 | `MotorNormal` | motor, lampu normal |
-| 6 | `MotorSilau` | motor, lampu menyilaukan |
-| 7 | `MotorBerwarna` | motor, lampu depan biru/cyan |
-| 8 | `MotorSilauBerwarna` | motor, lampu depan biru/cyan **dan** menyilaukan |
-| 9 | `PantulanCahaya` | pantulan/glare di aspal — **hard-negative, tidak pernah dihitung** |
+| 1 | `MobilStandar` | mobil dengan lampu standar |
+| 2 | `MobilTidakStandar` | mobil dengan lampu tidak standar |
+| 3 | `MotorStandar` | motor dengan lampu standar |
+| 4 | `MotorTidakStandar` | motor dengan lampu tidak standar |
+| 5 | `PantulanCahaya` | pantulan cahaya, target eksplisit YOLO dan FM; bukan objek kendaraan yang dihitung |
 
 ## Definisi operasional (diputuskan 2026-10-28)
 
@@ -54,21 +50,15 @@ kendaraan — tidak ada kasus "hanya tampak belakang" yang perlu diputuskan.
 | lampu terang tapi batas lampunya masih jelas, tanpa luapan | **bukan** silau |
 | cahaya putih atau berwarna yang jatuh di aspal, bukan di lampu | `PantulanCahaya` |
 
-**`Berwarna` hanya biru/cyan.** Piksel berwarna = `S >= 80` dan `V >= 80` dengan hue
-OpenCV 95–135, dan minimal **25%** luas box harus piksel tersebut. Merah, oranye,
-kuning, hijau, dan ungu **tidak** dihitung pada revisi ini. Ragu antara dua kelas →
-`BelumDitentukan`, jangan menebak.
+Pada kontrak ini anotator tidak memberi sublabel silau/warna. Kondisi yang diputuskan
+tidak memenuhi definisi lampu standar masuk `*TidakStandar`. Ragu → `BelumDitentukan`.
 
 > Ambang fotometrik sengaja **tidak** dipakai untuk silau: pengukuran 2026-10-28 pada
 > 1.125 box menunjukkan tidak ada fitur piksel yang memisahkan silau dari normal
 > (MASTER §13.9a). Acuan visual berupa set contoh patch akan disimpan di
 > `output/annotation/reference_patches/`.
 
-**Kelas berwarna tetap dianotasi, tetapi tidak masuk latihan.** Keputusan pemilik riset
-2026-10-28: data lampu biru tidak mencukupi (mining 1.548 crop hanya menghasilkan 2 box
-`train` dan 0 box `val`), jadi label YOLO memakai 5 kelas saja. Saat export,
-`*Berwarna` → `*Normal` dan `*SilauBerwarna` → `*Silau` padanannya. Anotasi 9 kelas tetap
-disimpan di `annotations.json` agar riset warna bisa dilanjutkan tanpa anotasi ulang.
+Store/COCO mempertahankan lima kelas anotasi. Export YOLO memetakan empat label kendaraan ke `Mobil`/`Motor` dan mengekspor `PantulanCahaya` sebagai kelas ketiga. Pantulan juga menjadi label ketiga CNN bersama `Standar` dan `TidakStandar`. NB06 menyaring pantulan sebelum ByteTrack, overlay, dan counting.
 
 **Satu box = satu kendaraan.** Untuk mobil, box melingkupi sepasang lampu (union); untuk
 motor, box melingkupi lampunya. Kelas `Normal` wajib ada supaya jumlah kendaraan total
@@ -90,13 +80,16 @@ sebagai petunjuk `? (Mobil)` — mempercepat keputusan tanpa mengisinya otomatis
    sekali dan aman untuk resume. **Kamera split `test` dikecualikan** agar gold-set bebas
    kebocoran.
 2. **UI anotasi** (matplotlib widget + ipywidgets): drag = box baru, klik = pilih,
-   `1`–`9` = set kelas, `x` = hapus, `u` = undo, `n`/`p` = navigasi, `r` = reviewed + next.
+   `1`–`5` = set kelas, `x` = hapus, `u` = undo, `n`/`p` = navigasi, `r` = reviewed + next.
 3. **Autosave** tiap mutasi ke `output/annotation/annotations.json` (tulis atomik).
-4. **Export**: `annotations_coco.json` (untuk fine-tune DINO) + gold-set YOLO
+4. **Export**: `annotations_coco.json` + gold-set YOLO
    (`output/annotation/yolo/{images,labels}`) + `split_map.csv`.
 
 > `data.yaml` **tidak** ditulis di sini. Dataset latih dimaterialisasi NB04 dari gold store
 > dengan split per kamera; menulis `train: images` di sini hanya mengundang kebocoran.
+
+Mode penuh menargetkan **1.016 frame train/validation** (826/190) dan mengecualikan semua frame
+test dari manifest anotasi ini. Angka target hanya tercapai setelah semua proposal NB02d direview.
 
 Output: `output/annotation/{sample_manifest.json, annotations.json, annotations_coco.json,
 annotation_summary.json, yolo/}`.
@@ -105,13 +98,14 @@ annotation_summary.json, yolo/}`.
 """
 
 CONFIG_SOURCE = '''from pathlib import Path
+import hashlib
 import json
 import os
 
 from PIL import Image
 from IPython.display import Markdown, display
 
-from pipeline_common import CLASS_NAMES, PENDING_CLASS_NAME, SPLIT_NAME_BY_CAMERA, TRAINING_CLASS_NAMES, filter_store_frames, training_class_name
+from pipeline_common import CLASS_NAMES, PENDING_CLASS_NAME, SPLIT_NAME_BY_CAMERA, TRAINING_CLASS_NAMES, build_roi_crop, filter_store_frames, load_roi_config, training_class_name
 
 RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
 if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
@@ -122,8 +116,13 @@ DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
 NB02_ROOT = DATA_ROOT / "nb02"
 CHUNK_DIR = NB02_ROOT / "chunks"
 CROP_DIR = NB02_ROOT / "crops"
+CURATED_CROP_DIR = OUTPUT_ROOT / "curated_crops_current_roi"
+CURATED_FRAME_DIR = OUTPUT_ROOT / "curated_frames"
+CURATED_MANIFEST_PATH = OUTPUT_ROOT / "manifests" / "curated_frames_manifest.csv"
+ROI_CONFIG = load_roi_config(OUTPUT_ROOT / "roi")
 NB02_SUMMARY_PATH = NB02_ROOT / "nb02_summary.json"
 ANNOTATION_ROOT = DATA_ROOT / "annotation"
+NB02D_PROPOSAL_MANIFEST_PATH = OUTPUT_ROOT / "nb02d" / "proposal_manifest.json"
 ANNOTATION_YOLO_ROOT = ANNOTATION_ROOT / "yolo"
 ANNOTATION_YOLO_IMAGE_DIR = ANNOTATION_YOLO_ROOT / "images"
 ANNOTATION_YOLO_LABEL_DIR = ANNOTATION_YOLO_ROOT / "labels"
@@ -133,7 +132,7 @@ COCO_EXPORT_PATH = ANNOTATION_ROOT / "annotations_coco.json"
 SPLIT_MAP_PATH = ANNOTATION_YOLO_ROOT / "split_map.csv"
 SUMMARY_PATH = ANNOTATION_ROOT / "annotation_summary.json"
 
-for output_dir in (ANNOTATION_ROOT, ANNOTATION_YOLO_IMAGE_DIR, ANNOTATION_YOLO_LABEL_DIR):
+for output_dir in (ANNOTATION_ROOT, ANNOTATION_YOLO_IMAGE_DIR, ANNOTATION_YOLO_LABEL_DIR, CURATED_CROP_DIR):
     output_dir.mkdir(parents=True, exist_ok=True)
 
 STORE_CLASS_NAMES = CLASS_NAMES + [PENDING_CLASS_NAME]
@@ -143,14 +142,10 @@ MOTOR_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.star
 VEHICLE_CLASS_NAMES = MOBIL_CLASS_NAMES + MOTOR_CLASS_NAMES
 
 CLASS_COLORS = {
-    "MobilNormal": "#39FF14",
-    "MobilSilau": "#FFD400",
-    "MobilBerwarna": "#00CFFF",
-    "MobilSilauBerwarna": "#FF00FF",
-    "MotorNormal": "#9ACD32",
-    "MotorSilau": "#FF8C00",
-    "MotorBerwarna": "#1E90FF",
-    "MotorSilauBerwarna": "#FF4500",
+    "MobilStandar": "#39FF14",
+    "MobilTidakStandar": "#FF3B30",
+    "MotorStandar": "#9ACD32",
+    "MotorTidakStandar": "#FF453A",
     "PantulanCahaya": "#B0B0B0",
     "BelumDitentukan": "#FFFFFF",
 }
@@ -163,7 +158,7 @@ CLASS_COLOR_BY_TOGGLE = {
 CLASS_NAME_BY_TOGGLE = dict(zip(CLASS_TOGGLE_LABELS, STORE_CLASS_NAMES))
 CLASS_TOGGLE_BY_NAME = dict(zip(STORE_CLASS_NAMES, CLASS_TOGGLE_LABELS))
 
-SAMPLE_TOTAL_FRAMES = 12 if SMOKE_MODE else 400
+SAMPLE_TOTAL_FRAMES = 12 if SMOKE_MODE else 1016
 RANDOM_SEED = 20261020
 MIN_SAMPLE_GAP_FRAMES = 30
 SAMPLE_EXCLUDED_SPLITS = ["test"]
@@ -183,6 +178,7 @@ display(Markdown(
 ))'''
 
 SAMPLING_SOURCE = '''from pathlib import Path
+import csv
 import json
 import random
 import shutil
@@ -207,6 +203,20 @@ def assert_detection_phase_complete(chunk_frame_total: int, summary_path: Path) 
         )
     with summary_path.open(encoding="utf-8") as summary_file:
         nb02_summary = json.load(summary_file)
+    current_roi_signature = hashlib.sha256(
+        json.dumps(ROI_CONFIG, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    if nb02_summary.get("roi_config_signature") != current_roi_signature:
+        raise RuntimeError(
+            "ROI aktif tidak cocok dengan crop/deteksi NB02. Selesaikan ulang NB02 memakai "
+            "output/roi/roi_config.json aktif sebelum menjalankan NB02b/NB02c."
+        )
+    chunk_signature_path = CHUNK_DIR / "_config_signature.txt"
+    if not chunk_signature_path.exists() or chunk_signature_path.read_text(encoding="utf-8").strip() != nb02_summary.get("config_signature"):
+        raise RuntimeError(
+            "Signature chunk NB02 tidak cocok dengan nb02_summary.json. Selesaikan ulang NB02 "
+            "sebelum membangun manifest anotasi."
+        )
     expected_frame_total = nb02_summary["frame_unique"]
     if chunk_frame_total != expected_frame_total:
         raise RuntimeError(
@@ -237,13 +247,96 @@ def split_candidates(candidates: list[dict], split_by_camera: dict[str, str], ex
 
 
 def build_image_candidates(chunk_rows: list[dict], crop_dir: Path) -> list[dict]:
-    candidates = []
+    candidates_by_stem = {}
     for chunk_row in chunk_rows:
         frame_stem = resolve_frame_stem(chunk_row)
         image_path = crop_dir / f"{frame_stem}.png"
         if image_path.exists():
-            candidates.append({**chunk_row, "frame_stem": frame_stem, "image_path": str(image_path)})
-    return candidates
+            candidates_by_stem[frame_stem] = {**chunk_row, "frame_stem": frame_stem, "image_path": str(image_path)}
+    if not CURATED_MANIFEST_PATH.exists():
+        raise FileNotFoundError(f"manifest curated tidak ditemukan: {CURATED_MANIFEST_PATH}")
+    missing = []
+    with CURATED_MANIFEST_PATH.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            video_stem = Path(row["video_path"]).stem
+            frame_stem = f"{video_stem}_{Path(row['frame_path']).stem}"
+            if frame_stem in candidates_by_stem:
+                continue
+            image_path = CURATED_CROP_DIR / f"{frame_stem}.png"
+            raw_frame_path = RISET_ROOT / Path(row["frame_path"])
+            if not raw_frame_path.exists():
+                missing.append(frame_stem)
+                continue
+            with Image.open(raw_frame_path) as source_image:
+                roi_crop, _, _, _ = build_roi_crop(
+                    source_image.convert("RGB"), ROI_CONFIG.get(video_stem.split("_")[1])
+                )
+            roi_crop.save(image_path)
+            width, height = roi_crop.size
+            candidates_by_stem[frame_stem] = {
+                "frame_stem": frame_stem, "video_stem": video_stem,
+                "camera_id": video_stem.split("_")[1], "frame_path": row["frame_path"],
+                "image_path": str(image_path), "image_width": width, "image_height": height,
+                "detections": [],
+            }
+    if missing:
+        raise FileNotFoundError(f"crop curated hilang untuk {len(missing)} frame; contoh {missing[:5]}")
+
+    if not SMOKE_MODE and SAMPLE_EXCLUDED_SPLITS == ["test"]:
+        if not NB02D_PROPOSAL_MANIFEST_PATH.exists():
+            raise FileNotFoundError(
+                f"Proposal fine-tuned belum tersedia: {NB02D_PROPOSAL_MANIFEST_PATH}. "
+                "Jalankan NB02d sampai proposal train/validation selesai, lalu review di NB02b."
+            )
+        proposal_payload = json.loads(NB02D_PROPOSAL_MANIFEST_PATH.read_text(encoding="utf-8"))
+        if proposal_payload.get("status") != "complete" or proposal_payload.get("human_review_required") is not True:
+            raise ValueError("Manifest NB02d belum lengkap atau tidak menandai kebutuhan review manusia.")
+        current_roi_signature = hashlib.sha256(
+            json.dumps(ROI_CONFIG, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        if proposal_payload.get("roi_signature") != current_roi_signature:
+            raise ValueError(
+                "Proposal NB02d dibuat memakai ROI berbeda dari ROI aktif. "
+                "Jalankan ulang NB02d sebelum review NB02b."
+            )
+        new_proposal_frames = proposal_payload.get("frames", [])
+        new_split_counts = {"train": 0, "val": 0}
+        for proposal in new_proposal_frames:
+            frame_stem = proposal["frame_stem"]
+            camera_id = proposal["camera_id"]
+            split_name = proposal.get("split")
+            if split_name not in {"train", "val"} or SPLIT_NAME_BY_CAMERA.get(camera_id) != split_name:
+                raise ValueError(f"Proposal NB02d membawa split/kamera tidak valid: {frame_stem} ({split_name}).")
+            image_path = Path(proposal["image_path"])
+            if not image_path.is_absolute():
+                image_path = RISET_ROOT / image_path
+            if not image_path.exists():
+                raise FileNotFoundError(f"Crop proposal NB02d hilang: {image_path}")
+            with Image.open(image_path) as proposal_image:
+                actual_size = proposal_image.size
+            if actual_size != (int(proposal["image_width"]), int(proposal["image_height"])):
+                raise ValueError(f"Dimensi crop proposal NB02d berubah: {frame_stem}.")
+            prior_candidate = candidates_by_stem.get(frame_stem, {})
+            if prior_candidate and (
+                prior_candidate.get("camera_id") != camera_id
+                or prior_candidate.get("split") != split_name
+            ):
+                raise ValueError(f"Metadata proposal NB02d bertentangan dengan kandidat lama: {frame_stem}.")
+            candidates_by_stem[frame_stem] = {
+                **prior_candidate,
+                **proposal,
+                "image_path": str(image_path),
+                "detections": proposal.get("detections", []),
+                "is_nb02d_proposal": True,
+            }
+            new_split_counts[split_name] += 1
+        expected_new_counts = proposal_payload.get("new_proposal_frames", {})
+        if new_split_counts != {key: int(expected_new_counts.get(key, -1)) for key in ("train", "val")}:
+            raise ValueError(
+                f"Jumlah frame proposal NB02d tidak cocok dengan ringkasan: "
+                f"{new_split_counts} vs {expected_new_counts}."
+            )
+    return list(candidates_by_stem.values())
 
 
 def allocate_sample_quota(camera_counts: dict[str, int], total_frames: int) -> dict[str, int]:
@@ -354,6 +447,11 @@ def build_or_load_sample_manifest(
     chunk_rows = load_all_chunk_rows(chunk_dir)
     assert_detection_phase_complete(len(chunk_rows), NB02_SUMMARY_PATH)
     all_candidates = build_image_candidates(chunk_rows, crop_dir)
+    proposal_signature = (
+        hashlib.sha256(NB02D_PROPOSAL_MANIFEST_PATH.read_bytes()).hexdigest()
+        if not SMOKE_MODE and NB02D_PROPOSAL_MANIFEST_PATH.exists()
+        else "smoke-or-unavailable"
+    )
     unmapped_cameras = sorted({candidate["camera_id"] for candidate in all_candidates} - set(split_by_camera))
     if unmapped_cameras:
         raise ValueError(f"kamera tanpa split per kamera di pipeline_common: {unmapped_cameras}")
@@ -366,17 +464,40 @@ def build_or_load_sample_manifest(
     for candidate in excluded_candidates:
         excluded_by_camera[candidate["camera_id"]] = excluded_by_camera.get(candidate["camera_id"], 0) + 1
     protected_frame_stems: set[str] = set()
+    stale_roi_stems: set[str] = set()
     if manifest_path.exists() and ANNOTATION_STORE_PATH.exists():
         with manifest_path.open(encoding="utf-8") as old_manifest_file:
             old_manifest_payload = json.load(old_manifest_file)
         with ANNOTATION_STORE_PATH.open(encoding="utf-8") as annotation_file:
             old_annotation_payload = json.load(annotation_file)
+        stale_roi_stems = {
+            record["frame_stem"] for record in old_manifest_payload.get("frames", [])
+            if "output/curated_crops/" in record.get("image_path", "").replace(chr(92), "/")
+        }
+        stale_review_stems = stale_roi_stems & set(old_annotation_payload.get("frames", {}))
+        for stale_stem in stale_review_stems:
+            old_annotation_payload["frames"][stale_stem]["reviewed"] = False
+        if stale_review_stems:
+            write_json_atomic(ANNOTATION_STORE_PATH, old_annotation_payload)
         protected_frame_stems = {
             record["frame_stem"]
             for record in old_manifest_payload.get("frames", [])
-            if old_annotation_payload.get("frames", {}).get(record["frame_stem"], {}).get("reviewed")
+            if record["frame_stem"] not in stale_roi_stems
+            and old_annotation_payload.get("frames", {}).get(record["frame_stem"], {}).get("reviewed")
         }
-    manifest_reused = manifest_path.exists()
+    protected_frame_stems.update(
+        candidate["frame_stem"]
+        for candidate in candidates
+        if candidate.get("is_nb02d_proposal")
+    )
+    manifest_reused = manifest_path.exists() and not stale_roi_stems
+    if manifest_reused:
+        with manifest_path.open(encoding="utf-8") as old_manifest_file:
+            old_settings = json.load(old_manifest_file)
+        if old_settings.get("candidate_frame_total") != len(candidates):
+            manifest_reused = False
+        if old_settings.get("nb02d_proposal_signature") != proposal_signature:
+            manifest_reused = False
     if manifest_reused and protected_frame_stems:
         with manifest_path.open(encoding="utf-8") as old_manifest_file:
             existing_manifest_settings = json.load(old_manifest_file)
@@ -417,9 +538,25 @@ def build_or_load_sample_manifest(
                 f"Hapus {manifest_path} lalu jalankan ulang sel ini."
             )
     else:
-        sample_records = stratified_sample_frame_records(
-            candidates, total_frames, random_seed, MIN_SAMPLE_GAP_FRAMES, protected_frame_stems
-        )
+        protected_candidates = [
+            candidate for candidate in candidates if candidate["frame_stem"] in protected_frame_stems
+        ]
+        if not SMOKE_MODE and len(protected_candidates) == total_frames:
+            sample_records = sorted(protected_candidates, key=lambda item: item["frame_stem"])
+        else:
+            sample_records = stratified_sample_frame_records(
+                candidates, total_frames, random_seed, MIN_SAMPLE_GAP_FRAMES, protected_frame_stems
+            )
+        if not SMOKE_MODE and excluded_splits == ["test"]:
+            final_split_counts = {
+                split_name: sum(SPLIT_NAME_BY_CAMERA[item["camera_id"]] == split_name for item in sample_records)
+                for split_name in ("train", "val")
+            }
+            if final_split_counts != {"train": 826, "val": 190}:
+                raise ValueError(
+                    f"Komposisi frame reviewed target harus train/val 826/190, aktual {final_split_counts}. "
+                    "Periksa baseline reviewed dan proposal NB02d sebelum anotasi/export."
+                )
         manifest_payload = {
             "sample_total_frames": total_frames,
             "random_seed": random_seed,
@@ -429,6 +566,7 @@ def build_or_load_sample_manifest(
             "pending_class_name": PENDING_CLASS_NAME,
             "chunk_frame_total": len(chunk_rows),
             "candidate_frame_total": len(candidates),
+            "nb02d_proposal_signature": proposal_signature,
             "excluded_frame_total": len(excluded_candidates),
             "eligible_by_camera": eligible_by_camera,
             "excluded_by_camera": excluded_by_camera,
@@ -450,6 +588,7 @@ def build_or_load_sample_manifest(
         "sampled_by_camera": sampled_by_camera,
         "sampled_total": len(sample_records),
         "random_seed": random_seed,
+        "nb02d_proposal_signature": proposal_signature,
     }
 
 
@@ -477,7 +616,37 @@ def load_annotation_store(store_path: Path, sample_records: list[dict]) -> dict:
     store_payload["frames"] = kept_frames
     store_payload["split_by_camera"] = dict(SPLIT_NAME_BY_CAMERA)
     for sample_record in sample_records:
-        kept_frames.setdefault(sample_record["frame_stem"], initialize_annotation_entry(sample_record))
+        frame_stem = sample_record["frame_stem"]
+        entry = kept_frames.setdefault(frame_stem, initialize_annotation_entry(sample_record))
+        image_path = Path(sample_record["image_path"])
+        if not image_path.exists():
+            raise FileNotFoundError(f"gambar anotasi hilang untuk {frame_stem}: {image_path}")
+        with Image.open(image_path) as image:
+            actual_width, actual_height = image.size
+        manifest_size = (sample_record.get("image_width"), sample_record.get("image_height"))
+        if manifest_size != (actual_width, actual_height):
+            raise ValueError(
+                f"dimensi manifest tidak cocok dengan gambar untuk {frame_stem}: "
+                f"manifest={manifest_size}, gambar={(actual_width, actual_height)}"
+            )
+        out_of_bounds = [
+            index for index, box_entry in enumerate(entry.get("boxes", []))
+            if not box_entry.get("deleted") and (
+                float(box_entry["box"][0]) < 0
+                or float(box_entry["box"][1]) < 0
+                or float(box_entry["box"][2]) > actual_width
+                or float(box_entry["box"][3]) > actual_height
+            )
+        ]
+        if out_of_bounds:
+            raise ValueError(
+                f"box di luar gambar aktif untuk {frame_stem}: indeks {out_of_bounds[:10]}. "
+                "Periksa ROI dan anotasi secara visual; dimensi store tidak disinkronkan."
+            )
+        # Box disimpan dalam piksel koordinat gambar; perbarui metadata lama hanya
+        # setelah sumber gambar dan seluruh koordinat lolos validasi batas.
+        entry["image_width"] = actual_width
+        entry["image_height"] = actual_height
     return store_payload
 
 
@@ -584,6 +753,8 @@ def validate_annotation_store() -> list[str]:
         validation_errors.append(f"{len(unknown_frames)} frame di store tidak ada di manifest (contoh: {unknown_frames[0]})")
     for frame_stem, entry in annotation_store[STORE_FRAMES_KEY].items():
         for box_index, box_entry in enumerate(entry["boxes"]):
+            if box_entry.get("deleted", False):
+                continue
             if box_entry["class_name"] not in STORE_CLASS_NAMES:
                 validation_errors.append(f"{frame_stem} box {box_index}: kelas tidak dikenal {box_entry['class_name']}")
             box = box_entry["box"]
@@ -1137,47 +1308,73 @@ def write_yolo_gold_set(records: list[dict]) -> tuple[dict, list[dict]]:
             f"{len(missing_image_paths)} gambar crop hilang (contoh: {missing_image_paths[0]}); "
             "dataset gold lama tidak disentuh."
         )
-    for existing_path in ANNOTATION_YOLO_IMAGE_DIR.glob("*.png"):
-        existing_path.unlink()
-    for existing_path in ANNOTATION_YOLO_LABEL_DIR.glob("*.txt"):
-        existing_path.unlink()
+    staging_root = ANNOTATION_ROOT / f".yolo_export_staging_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    staging_image_dir = staging_root / "images"
+    staging_label_dir = staging_root / "labels"
+    staging_image_dir.mkdir(parents=True)
+    staging_label_dir.mkdir(parents=True)
+    export_status_path = staging_root / "export_manifest.json"
     label_counts_by_class = {class_name: 0 for class_name in TRAINING_CLASS_NAMES}
     label_file_count = 0
     exported_records = []
+    split_lines = ["frame_stem,camera_id,split"]
     for sample_record in records:
         entry = annotation_store["frames"][sample_record["frame_stem"]]
+        with Image.open(sample_record["image_path"]) as image:
+            image_width, image_height = image.size
+        if (image_width, image_height) != (entry["image_width"], entry["image_height"]):
+            raise ValueError(
+                f"dimensi gambar/store tidak cocok untuk {sample_record['frame_stem']}: "
+                f"gambar={(image_width, image_height)}, store={(entry['image_width'], entry['image_height'])}"
+            )
         label_lines = []
         for box_entry in entry["boxes"]:
             if box_entry["deleted"]:
                 continue
             yolo_box = normalize_box_to_yolo(box_entry["box"], entry["image_width"], entry["image_height"])
+            if any(coordinate < 0 or coordinate > 1 for coordinate in yolo_box):
+                raise ValueError(f"koordinat YOLO di luar [0,1] untuk {sample_record['frame_stem']}: {yolo_box}")
             training_class = training_class_name(box_entry["class_name"])
+            if training_class is None:
+                continue
             class_index = TRAINING_CLASS_NAMES.index(training_class)
             label_lines.append(f"{class_index} " + " ".join(f"{coordinate:.6f}" for coordinate in yolo_box))
             label_counts_by_class[training_class] += 1
-        if not label_lines:
-            continue
         target_stem = sample_record["frame_stem"]
-        shutil.copyfile(sample_record["image_path"], ANNOTATION_YOLO_IMAGE_DIR / f"{target_stem}.png")
-        (ANNOTATION_YOLO_LABEL_DIR / f"{target_stem}.txt").write_text(
-            "\\n".join(label_lines) + "\\n", encoding="utf-8"
+        shutil.copyfile(sample_record["image_path"], staging_image_dir / f"{target_stem}.png")
+        (staging_label_dir / f"{target_stem}.txt").write_text(
+            ("\\n".join(label_lines) + "\\n") if label_lines else "", encoding="utf-8"
         )
         label_file_count += 1
         exported_records.append(sample_record)
-    return {
-        "gold_images": len(list(ANNOTATION_YOLO_IMAGE_DIR.glob("*.png"))),
+        split_name = resolve_camera_split(sample_record["camera_id"], SPLIT_NAME_BY_CAMERA)
+        split_lines.append(f"{target_stem},{sample_record['camera_id']},{split_name}")
+    image_stems = {path.stem for path in staging_image_dir.glob("*.png")}
+    label_stems = {path.stem for path in staging_label_dir.glob("*.txt")}
+    if image_stems != label_stems or len(image_stems) != len(records):
+        raise ValueError("hasil export YOLO tidak lengkap; status tetap in_progress dan NB04 akan menolak dataset")
+    (staging_root / "split_map.csv").write_text("\\n".join(split_lines) + "\\n", encoding="utf-8")
+    summary = {
+        "gold_images": len(list(staging_image_dir.glob("*.png"))),
         "gold_labels": label_file_count,
         "gold_boxes": sum(label_counts_by_class.values()),
         "gold_boxes_by_class": label_counts_by_class,
-    }, exported_records
-
-
-def write_split_map(records: list[dict]) -> None:
-    split_lines = ["frame_stem,camera_id,split"]
-    for sample_record in records:
-        split_name = resolve_camera_split(sample_record["camera_id"], SPLIT_NAME_BY_CAMERA)
-        split_lines.append(f"{sample_record['frame_stem']},{sample_record['camera_id']},{split_name}")
-    SPLIT_MAP_PATH.write_text("\\n".join(split_lines) + "\\n", encoding="utf-8")
+    }
+    export_status_path.write_text(
+        json.dumps({"status": "complete", "completed_at": datetime.now().isoformat(), **summary}, indent=2),
+        encoding="utf-8",
+    )
+    export_backup = ANNOTATION_ROOT / f"_backup_yolo_export_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    if ANNOTATION_YOLO_ROOT.exists():
+        export_backup.mkdir(parents=True)
+        ANNOTATION_YOLO_ROOT.replace(export_backup / "yolo")
+    try:
+        staging_root.replace(ANNOTATION_YOLO_ROOT)
+    except Exception:
+        if (export_backup / "yolo").exists() and not ANNOTATION_YOLO_ROOT.exists():
+            (export_backup / "yolo").replace(ANNOTATION_YOLO_ROOT)
+        raise
+    return summary, exported_records
 
 
 def build_annotation_preview(records: list[dict], preview_path: Path, preview_count: int) -> None:
@@ -1228,7 +1425,6 @@ coco_payload = build_coco_payload(reviewed_records)
 with COCO_EXPORT_PATH.open("w", encoding="utf-8") as coco_file:
     json.dump(coco_payload, coco_file, ensure_ascii=False, indent=2)
 gold_summary, exported_records = write_yolo_gold_set(reviewed_records)
-write_split_map(exported_records)
 build_annotation_preview(exported_records, ANNOTATION_ROOT / "annotation_preview_after.png", PREVIEW_FRAME_COUNT)
 
 source_counts = box_source_counts()
@@ -1270,8 +1466,8 @@ for class_name in TRAINING_CLASS_NAMES:
 display(Markdown("## Export hasil anotasi\\n" + "\\n".join(summary_table_lines)))
 display(Markdown("### Box per kelas anotasi\\n" + "\\n".join(class_table_lines)))
 display(Markdown(
-    "### Box per kelas latih\\nKelas `*Berwarna` runtuh ke `*Normal`/`*Silau` padanannya \\u2192 "
-    "label YOLO hanya memakai 5 kelas.\\n\\n" + "\\n".join(training_table_lines)
+    "### Box per kelas latih\\nKelas kondisi kendaraan dipetakan ke Mobil/Motor; PantulanCahaya menjadi kelas deteksi ketiga YOLO.\\n\\n"
+    + "\\n".join(training_table_lines)
 ))
 display(Markdown(
     f"COCO: `{COCO_EXPORT_PATH}`\\n\\nGold-set YOLO: `{ANNOTATION_YOLO_ROOT}` "

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build NB05_evaluation.ipynb: kalibrasi confidence per kelas dan sistem hitung 8 angka."""
+"""Build NB05_evaluation.ipynb: kalibrasi confidence YOLO dan baseline bbox per frame."""
 
 import sys
 from pathlib import Path
@@ -14,50 +14,44 @@ from notebook_gate import verify_code_cells
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_NOTEBOOK = PROJECT_ROOT / "NB05_evaluation.ipynb"
 
-EXPECTED_CODE_CELL_COUNT = 5
+EXPECTED_CODE_CELL_COUNT = 6
 EXPECTED_MARKDOWN_CELL_COUNT = 1
 
-NAVBAR_MARKDOWN = """# NB05 — Kalibrasi Threshold & Sistem Hitung 8 Angka
+NAVBAR_MARKDOWN = """# NB05 — Kalibrasi Threshold Detector
 
 Tahap terakhir: tentukan ambang *confidence* per kelas di split `val`, lalu pakai ambang itu untuk
 menghitung keluaran yang diminta riset.
 
 **Posisi:** `NB02 → NB02b → NB03 → NB04 (latih) → NB05 (kalibrasi + hitung)`
 
-## Dua pekerjaan yang dipisah tegas
+## Evaluasi dan baseline
 
 1. **Kalibrasi (split `val`, ada ground truth).** Untuk setiap kelas, ambang confidence disapu dari
    `CONF_FLOOR` sampai `CONF_CEILING`; ambang terpilih = F1 terbaik. Prediksi di-matching ke gold
    dengan IoU ≥ `MATCH_IOU`, greedy per kelas, prediksi ber-confidence lebih tinggi didahulukan.
    Ambang **tidak pernah** dipilih dari `train` maupun dari kamera test.
-2. **Penghitungan (kamera `test`, tanpa ground truth).** Model dijalankan pada frame kamera test,
-   box difilter dengan ambang hasil kalibrasi, lalu 8 angka dijumlahkan langsung dari kelas.
+2. **Penghitungan (kamera `test`).** Model dijalankan pada frame kamera test,
+   box difilter dengan ambang hasil kalibrasi, lalu jumlah bbox Mobil dan Motor dilaporkan terpisah.
 
-## Hitungan yang diterbitkan NB05
+## Hitungan baseline NB05
 
-NB05 **bukan** sumber angka kendaraan unik. Sel hitung di sini menghitung **box per frame** pada
-frame test tersampling: satu kendaraan yang terlihat di 30 frame menyumbang 30. Fungsinya
-memeriksa cakupan dan keseimbangan kelas pada ambang terpilih, bukan menghitung populasi.
-Kendaraan unik hanya terbit dari **NB06** (ByteTrack + penyambungan fragmen).
+NB05 **bukan** sumber counting utama. Sel hitung di sini menghitung **box per frame** pada frame
+test tersampling untuk memeriksa cakupan dan keseimbangan kelas pada ambang terpilih. Counting
+dashboard dari video kontinu diterbitkan NB06 sebagai bbox tidak standar per frame.
 
 | Keluaran | Penjumlahan kelas |
 |---|---|
-| Jumlah box mobil | `MobilNormal + MobilSilau + MobilBerwarna + MobilSilauBerwarna` |
-| Jumlah box motor | `MotorNormal + MotorSilau + MotorBerwarna + MotorSilauBerwarna` |
-| Box lampu silau — mobil | `MobilSilau + MobilSilauBerwarna` |
-| Box lampu silau — motor | `MotorSilau + MotorSilauBerwarna` |
-| Box lampu berwarna — mobil | `MobilBerwarna + MobilSilauBerwarna` |
-| Box lampu berwarna — motor | `MotorBerwarna + MotorSilauBerwarna` |
-| Box lampu silau **dan** berwarna — mobil | `MobilSilauBerwarna` |
-| Box lampu silau **dan** berwarna — motor | `MotorSilauBerwarna` |
+| Jumlah bbox mobil | deteksi kelas `Mobil` lolos threshold |
+| Jumlah bbox motor | deteksi kelas `Motor` lolos threshold |
 
-`PantulanCahaya` **tidak pernah** masuk angka mana pun: fungsinya hanya hard-negative saat latihan.
+NB05 mengevaluasi detector tipe kendaraan. Klasifikasi kondisi lampu dan hitungan bbox tidak standar
+dihasilkan pada tahap berikutnya oleh NB04b dan NB06.
 
 ## Batas yang harus ditulis di laporan
 
-Kamera test tidak punya anotasi manual, jadi angka hitung **tidak punya pasangan akurasi** di split
-test. Bukti ketelitian model berasal dari split `val` (NB04 + tabel kalibrasi di bawah), sedangkan
-angka hitung adalah aplikasi model itu pada footage test. Angka di sini adalah **jumlah box pada
+Jika NB02c sudah mengekspor anotasi holdout yang direview, sel terakhir menghitung metrik detector
+test (precision, recall, mAP@50, mAP@50:95, serta error ukuran/koordinat bbox). Jika belum ada GT,
+metrik berstatus unavailable dan tidak dibuat-buat. Angka hitung tetap **jumlah box pada
 frame tersampling unik**, bukan estimasi arus lalu lintas per jam dan bukan jumlah kendaraan unik.
 
 ## Mode smoke
@@ -75,15 +69,11 @@ import os
 
 import numpy as np
 import pandas as pd
+import cv2
 import torch
 from IPython.display import Markdown, display
 
-from pipeline_common import (
-    BOX_COUNT_CONTRACT,
-    CLASS_NAMES,
-    TRAINING_CLASS_NAMES,
-    UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS,
-)
+from pipeline_common import TRAINING_CLASS_NAMES, training_class_name
 
 RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
 if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
@@ -203,14 +193,14 @@ def load_gold_targets(store_payload: dict, frame_stem: str) -> pd.DataFrame:
     frame_entry = store_payload["frames"][frame_stem]
     target_rows = [
         {
-            "class_name": box_entry["class_name"],
+            "class_name": training_class_name(box_entry["class_name"]),
             "box_x1": float(box_entry["box"][0]),
             "box_y1": float(box_entry["box"][1]),
             "box_x2": float(box_entry["box"][2]),
             "box_y2": float(box_entry["box"][3]),
         }
         for box_entry in frame_entry["boxes"]
-        if not box_entry["deleted"]
+        if not box_entry["deleted"] and training_class_name(box_entry["class_name"]) is not None
     ]
     return pd.DataFrame(target_rows, columns=["class_name", "box_x1", "box_y1", "box_x2", "box_y2"])
 
@@ -455,26 +445,16 @@ counted_box_frame = pd.DataFrame(
 )
 counted_box_frame.to_csv(COUNTING_BY_FRAME_PATH, index=False)
 
-class_counts = {class_name: int((counted_box_frame["class_name"] == class_name).sum()) for class_name in CLASS_NAMES}
-box_totals = {
-    contract_key: "n/a"
-    if contract_key in UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS
-    else int(sum(class_counts[class_name] for class_name in contract_classes))
-    for contract_key, contract_classes in BOX_COUNT_CONTRACT.items()
-}
+class_counts = {class_name: int((counted_box_frame["class_name"] == class_name).sum()) for class_name in TRAINING_CLASS_NAMES}
 
 per_camera_rows = []
-for camera_id, camera_slice in counted_box_frame.groupby("camera_id"):
-    camera_class_counts = {class_name: int((camera_slice["class_name"] == class_name).sum()) for class_name in CLASS_NAMES}
+for camera_id in sorted(counting_frames["camera_id"].unique()):
+    camera_slice = counted_box_frame[counted_box_frame["camera_id"] == camera_id]
+    camera_class_counts = {class_name: int((camera_slice["class_name"] == class_name).sum()) for class_name in TRAINING_CLASS_NAMES}
     per_camera_rows.append({
         "camera_id": camera_id,
         "frames": int(counting_frames.loc[counting_frames["camera_id"] == camera_id, "frame_stem"].nunique()),
-        **{
-            contract_key: "n/a"
-            if contract_key in UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS
-            else int(sum(camera_class_counts[class_name] for class_name in contract_classes))
-            for contract_key, contract_classes in BOX_COUNT_CONTRACT.items()
-        },
+        **{f"jumlah_bbox_{class_name.lower()}": camera_class_counts[class_name] for class_name in TRAINING_CLASS_NAMES},
     })
 per_camera_frame = pd.DataFrame(per_camera_rows)
 per_camera_frame.to_csv(COUNTING_BY_CAMERA_PATH, index=False)
@@ -485,7 +465,7 @@ display(Markdown(
     f"**{len(counted_box_frame)} box lolos ambang**."
 ))
 display(Markdown("### Jumlah box per kelas (bukan jumlah kendaraan unik — itu NB06)"))
-display(pd.DataFrame([{"keluaran": key, "jumlah": value} for key, value in box_totals.items()]))
+display(pd.DataFrame([{"kelas": key, "jumlah_bbox": value} for key, value in class_counts.items()]))
 display(Markdown("### Rincian per kamera test"))
 display(per_camera_frame)'''
 
@@ -493,16 +473,7 @@ SUMMARY_SOURCE = '''import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-labelled_totals = {
-    "box mobil": box_totals["jumlah_box_mobil"],
-    "box motor": box_totals["jumlah_box_motor"],
-    "silau mobil": box_totals["jumlah_box_lampu_silau_mobil"],
-    "silau motor": box_totals["jumlah_box_lampu_silau_motor"],
-    "berwarna mobil": box_totals["jumlah_box_lampu_berwarna_mobil"],
-    "berwarna motor": box_totals["jumlah_box_lampu_berwarna_motor"],
-    "silau+berwarna mobil": box_totals["jumlah_box_lampu_silau_dan_berwarna_mobil"],
-    "silau+berwarna motor": box_totals["jumlah_box_lampu_silau_dan_berwarna_motor"],
-}
+labelled_totals = {f"bbox {class_name.lower()}": class_counts[class_name] for class_name in TRAINING_CLASS_NAMES}
 
 figure, axis = plt.subplots(figsize=(12, 5))
 plot_totals = {key: value for key, value in labelled_totals.items() if isinstance(value, int)}
@@ -529,7 +500,7 @@ counting_summary_payload = {
     "frames_counted": int(len(counting_frames)),
     "counted_boxes": int(len(counted_box_frame)),
     "class_counts": class_counts,
-    "box_totals": box_totals,
+    "box_totals": {f"jumlah_bbox_{name.lower()}": value for name, value in class_counts.items()},
     "selected_thresholds": selected_thresholds,
     "counting_unit": "box_per_frame",
     "unit_note": (
@@ -553,9 +524,6 @@ if VAL_METRICS_PATH.exists():
         f"({val_metrics_payload['val_frames']} frame val)"
     )
 
-contract_lines = "\\n".join(
-    f"| {contract_key} | {box_totals[contract_key]} |" for contract_key in BOX_COUNT_CONTRACT
-)
 class_lines = "\\n".join(
     f"| `{class_name}` | {class_counts[class_name]} |" for class_name in TRAINING_CLASS_NAMES
 )
@@ -564,10 +532,6 @@ display(Markdown(
     f"""### Ringkasan NB05
 
 Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · kamera test: {', '.join(sorted(counting_frames['camera_id'].unique()))} · frame dihitung: **{len(counting_frames)}**
-
-| Keluaran | Jumlah |
-|---|---|
-{contract_lines}
 
 **Box per kelas (setelah ambang kalibrasi)**
 
@@ -586,6 +550,92 @@ hitung bukan estimasi arus lalu lintas dan tidak boleh diekstrapolasi ke per jam
 ))'''
 
 
+TEST_EVALUATION_SOURCE = '''from ultralytics import YOLO
+import yaml
+
+GT_ROOT = OUTPUT_ROOT / "ground_truth" / "yolo"
+GT_IMAGES, GT_LABELS = GT_ROOT / "images", GT_ROOT / "labels"
+TEST_METRICS_PATH = NB05_ROOT / "test_metrics.json"
+test_images = sorted([*GT_IMAGES.glob("*.png"), *GT_IMAGES.glob("*.jpg"), *GT_IMAGES.glob("*.jpeg")])
+if not test_images:
+    test_metrics_payload = {"status": "unavailable", "reason": "Belum ada anotasi NB02c yang direview dan diekspor."}
+    display(Markdown("**Metrik test belum tersedia:** review dan export anotasi holdout di NB02c terlebih dahulu."))
+else:
+    label_errors = []
+    for image_path in test_images:
+        label_path = GT_LABELS / f"{image_path.stem}.txt"
+        if not label_path.exists():
+            label_errors.append(f"label hilang: {label_path.name}")
+            continue
+        for line_number, line in enumerate(label_path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            fields = line.split()
+            try:
+                values = [float(value) for value in fields]
+            except ValueError:
+                label_errors.append(f"nilai bukan numerik: {label_path.name}:{line_number}")
+                continue
+            if len(values) != 5 or not np.isfinite(values).all() or values[0] != int(values[0]) or int(values[0]) not in range(len(TRAINING_CLASS_NAMES)):
+                label_errors.append(f"format/ID kelas tidak sesuai: {label_path.name}:{line_number} ({line.strip()})")
+                continue
+            _, center_x, center_y, box_width, box_height = values
+            if not (0 <= center_x <= 1 and 0 <= center_y <= 1 and 0 < box_width <= 1 and 0 < box_height <= 1
+                    and center_x - box_width / 2 >= -1e-6 and center_y - box_height / 2 >= -1e-6
+                    and center_x + box_width / 2 <= 1 + 1e-6 and center_y + box_height / 2 <= 1 + 1e-6):
+                label_errors.append(f"koordinat tidak ternormalisasi/keluar batas: {label_path.name}:{line_number} ({line.strip()})")
+    if label_errors:
+        raise ValueError(
+            f"Ground truth YOLO tidak valid ({len(label_errors)} masalah); evaluasi dibatalkan. "
+            f"Contoh: {label_errors[:8]}. Regenerasi dari store NB02c dengan repair_ground_truth_export.py."
+        )
+    (GT_ROOT / "labels.cache").unlink(missing_ok=True)
+    test_yaml = NB05_ROOT / "test_ground_truth.yaml"
+    test_yaml.write_text(yaml.safe_dump({"path": str(GT_ROOT), "train": "images", "val": "images", "test": "images",
+        "nc": len(TRAINING_CLASS_NAMES), "names": {i: n for i, n in enumerate(TRAINING_CLASS_NAMES)}}, sort_keys=False), encoding="utf-8")
+    test_model = YOLO(str(WEIGHTS_PATH))
+    result = test_model.val(data=str(test_yaml), split="test", imgsz=IMAGE_SIZE, batch=BATCH_SIZE, device=DEVICE, plots=True)
+    metrics = {"precision": float(result.box.mp), "recall": float(result.box.mr),
+               "mAP50": float(result.box.map50), "mAP50-95": float(result.box.map)}
+    errors, iou_errors = [], []
+    for image_path in test_images:
+        label_path = GT_LABELS / f"{image_path.stem}.txt"
+        image = cv2.imread(str(image_path))
+        if image is None or not label_path.exists(): continue
+        h, w = image.shape[:2]
+        gt = []
+        for line in label_path.read_text(encoding="utf-8").splitlines():
+            row = [float(x) for x in line.split()]
+            if len(row) == 5: gt.append((int(row[0]), np.array(row[1:])))
+        pred_result = test_model.predict(str(image_path), imgsz=IMAGE_SIZE, conf=FALLBACK_CONF, device=DEVICE, verbose=False)[0]
+        pred = []
+        if pred_result.boxes is not None:
+            for b in pred_result.boxes:
+                x1,y1,x2,y2 = b.xyxy[0].cpu().numpy()
+                pred.append((int(b.cls.item()), np.array([(x1+x2)/(2*w),(y1+y2)/(2*h),(x2-x1)/w,(y2-y1)/h])))
+        pairs=[]
+        for pi,(pc,pb) in enumerate(pred):
+            for gi,(gc,gb) in enumerate(gt):
+                if pc != gc: continue
+                pxy=[pb[0]-pb[2]/2,pb[1]-pb[3]/2,pb[0]+pb[2]/2,pb[1]+pb[3]/2]
+                gxy=[gb[0]-gb[2]/2,gb[1]-gb[3]/2,gb[0]+gb[2]/2,gb[1]+gb[3]/2]
+                inter=max(0,min(pxy[2],gxy[2])-max(pxy[0],gxy[0]))*max(0,min(pxy[3],gxy[3])-max(pxy[1],gxy[1]))
+                iou=inter/max(pb[2]*pb[3]+gb[2]*gb[3]-inter,1e-12)
+                if iou >= MATCH_IOU: pairs.append((iou,pi,gi))
+        used_p,used_g=set(),set()
+        for iou,pi,gi in sorted(pairs,reverse=True):
+            if pi in used_p or gi in used_g: continue
+            used_p.add(pi);used_g.add(gi);errors.append(pred[pi][1]-gt[gi][1]);iou_errors.append(iou)
+    if errors:
+        e=np.asarray(errors)
+        metrics.update({"bbox_coordinate_mse_normalized":float(np.mean(e**2)),"bbox_coordinate_rmse_normalized":float(np.sqrt(np.mean(e**2))),
+                        "bbox_size_mae_normalized":float(np.mean(np.abs(e[:,2:4]))),"bbox_iou_error_mean":float(1-np.mean(iou_errors)),"bbox_matched_count":len(errors)})
+    test_metrics_payload={"status":"computed","split":"test","label_source":"reviewed NB02c holdout","frames":len(test_images),"overall":metrics}
+    display(Markdown(f"**Detector test** — precision {metrics['precision']:.3f} · recall {metrics['recall']:.3f} · mAP@50 {metrics['mAP50']:.3f} · mAP@50:95 {metrics['mAP50-95']:.3f}"))
+    if errors: display(Markdown(f"BBox size MAE normalized {metrics['bbox_size_mae_normalized']:.4f}; coordinate RMSE normalized {metrics['bbox_coordinate_rmse_normalized']:.4f}; IoU error {metrics['bbox_iou_error_mean']:.4f}; matched {len(errors)}."))
+TEST_METRICS_PATH.write_text(json.dumps(test_metrics_payload,indent=2,ensure_ascii=False),encoding="utf-8")'''
+
+
 def build_notebook() -> nbformat.NotebookNode:
     notebook_cells = [
         nbformat.v4.new_markdown_cell(NAVBAR_MARKDOWN),
@@ -594,6 +644,7 @@ def build_notebook() -> nbformat.NotebookNode:
         nbformat.v4.new_code_cell(THRESHOLD_SOURCE),
         nbformat.v4.new_code_cell(COUNT_SOURCE),
         nbformat.v4.new_code_cell(SUMMARY_SOURCE),
+        nbformat.v4.new_code_cell(TEST_EVALUATION_SOURCE),
     ]
     return nbformat.v4.new_notebook(
         cells=notebook_cells,

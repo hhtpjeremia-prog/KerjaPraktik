@@ -1,8 +1,4 @@
-"""Multi-label classifier untuk atribut cahaya pada crop kendaraan.
-
-Detektor hanya bertugas mencari kendaraan. Modul ini membaca piksel crop kendaraan
-dan memprediksi dua atribut yang dapat hadir bersamaan: silau dan berwarna.
-"""
+"""Classifier supervised untuk kondisi kendaraan dan kelas pantulan cahaya."""
 
 from __future__ import annotations
 
@@ -12,17 +8,15 @@ import numpy as np
 import torch
 from PIL import Image
 from torch import nn
+from torchvision import models, transforms
 
-ATTRIBUTE_NAMES = ("silau", "berwarna")
+ATTRIBUTE_NAMES = ("standar", "tidak_standar", "pantulan_cahaya")
 ATTRIBUTE_BY_ANNOTATION_CLASS = {
-    "MobilNormal": (0, 0),
-    "MobilSilau": (1, 0),
-    "MobilBerwarna": (0, 1),
-    "MobilSilauBerwarna": (1, 1),
-    "MotorNormal": (0, 0),
-    "MotorSilau": (1, 0),
-    "MotorBerwarna": (0, 1),
-    "MotorSilauBerwarna": (1, 1),
+    "MobilStandar": 0,
+    "MobilTidakStandar": 1,
+    "MotorStandar": 0,
+    "MotorTidakStandar": 1,
+    "PantulanCahaya": 2,
 }
 VEHICLE_TYPE_BY_ANNOTATION_CLASS = {
     **{name: "mobil" for name in ATTRIBUTE_BY_ANNOTATION_CLASS if name.startswith("Mobil")},
@@ -32,7 +26,7 @@ FEATURE_VERSION = "pixel-hsv-v1"
 FEATURE_SIZE = 35
 
 
-def attributes_for_label(class_name: str) -> tuple[int, int]:
+def attributes_for_label(class_name: str) -> int:
     if class_name not in ATTRIBUTE_BY_ANNOTATION_CLASS:
         raise ValueError(f"Kelas bukan kendaraan beratribut: {class_name}")
     return ATTRIBUTE_BY_ANNOTATION_CLASS[class_name]
@@ -86,36 +80,90 @@ def extract_pixel_features(image_path: Path | Image.Image, box_xyxy: list[float]
     return features
 
 
-class AttributeMLP(nn.Module):
-    def __init__(self, input_size: int = FEATURE_SIZE) -> None:
+class AttributeFusionCNN(nn.Module):
+    """ResNet18 image encoder fused with engineered HSV/color statistics."""
+
+    def __init__(self, pretrained: bool = False, feature_size: int = FEATURE_SIZE) -> None:
         super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 64),
-            nn.ReLU(),
+        weights = models.ResNet18_Weights.DEFAULT if pretrained else None
+        self.backbone = models.resnet18(weights=weights)
+        image_size = self.backbone.fc.in_features
+        self.backbone.fc = nn.Identity()
+        self.head = nn.Sequential(
+            nn.Dropout(0.25),
+            nn.Linear(image_size + feature_size, 128),
+            nn.ReLU(inplace=True),
             nn.Dropout(0.20),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, len(ATTRIBUTE_NAMES)),
+            nn.Linear(128, len(ATTRIBUTE_NAMES)),
         )
 
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        return self.network(features)
+    def forward(self, images: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
+        return self.head(torch.cat((self.backbone(images), features), dim=1))
 
 
-def save_classifier(path: Path, model: AttributeMLP, mean: np.ndarray, std: np.ndarray, metadata: dict) -> None:
+class ResizeLongestSideAndPad:
+    """Keep the full bbox crop and aspect ratio, then pad to a square canvas."""
+
+    def __init__(self, size: int = 224) -> None:
+        self.size = size
+        # RGB ImageNet mean, so padding becomes zero after Normalize below.
+        self.fill = (124, 116, 104)
+
+    def __call__(self, image: Image.Image) -> Image.Image:
+        image = image.convert("RGB")
+        width, height = image.size
+        if width < 1 or height < 1:
+            raise ValueError(f"crop has invalid dimensions: {image.size}")
+        scale = self.size / max(width, height)
+        resized_width = max(1, min(self.size, round(width * scale)))
+        resized_height = max(1, min(self.size, round(height * scale)))
+        resampling = getattr(Image, "Resampling", Image).BICUBIC
+        resized = image.resize((resized_width, resized_height), resampling)
+        canvas = Image.new("RGB", (self.size, self.size), self.fill)
+        offset = ((self.size - resized_width) // 2, (self.size - resized_height) // 2)
+        canvas.paste(resized, offset)
+        return canvas
+
+
+IMAGE_TRANSFORM = transforms.Compose([
+    ResizeLongestSideAndPad(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+])
+
+
+def extract_image_crop(image_path: Path | Image.Image, box_xyxy: list[float]) -> Image.Image:
+    image = image_path.convert("RGB") if isinstance(image_path, Image.Image) else Image.open(image_path).convert("RGB")
+    width, height = image.size
+    x1, y1, x2, y2 = box_xyxy
+    x1 = max(0, min(width - 1, int(round(x1))))
+    y1 = max(0, min(height - 1, int(round(y1))))
+    x2 = max(x1 + 1, min(width, int(round(x2))))
+    y2 = max(y1 + 1, min(height, int(round(y2))))
+    return image.crop((x1, y1, x2, y2))
+
+
+def save_classifier(path: Path, model: nn.Module, mean: np.ndarray, std: np.ndarray, metadata: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "mean": mean, "std": std, "metadata": metadata}, path)
 
 
-def load_classifier(path: Path, device: str = "cpu") -> tuple[AttributeMLP, np.ndarray, np.ndarray, dict]:
+def load_classifier(path: Path, device: str = "cpu") -> tuple[AttributeFusionCNN, np.ndarray, np.ndarray, dict]:
     payload = torch.load(path, map_location=device, weights_only=False)
-    model = AttributeMLP()
+    metadata = payload["metadata"]
+    model_type = metadata.get("model_type", "mlp")
+    if model_type != "resnet18_hsv_fusion":
+        raise ValueError(
+            f"Checkpoint classifier tidak kompatibel: model_type={model_type!r}; "
+            "latih ulang dengan `python builders/train_attribute_classifier.py`."
+        )
+    model = AttributeFusionCNN(pretrained=False)
     model.load_state_dict(payload["state_dict"])
     model.to(device).eval()
-    return model, np.asarray(payload["mean"], dtype=np.float32), np.asarray(payload["std"], dtype=np.float32), payload["metadata"]
+    return model, np.asarray(payload["mean"], dtype=np.float32), np.asarray(payload["std"], dtype=np.float32), metadata
 
 
 def decode_attributes(logits: np.ndarray, thresholds: dict[str, float] | None = None) -> dict[str, bool]:
-    thresholds = thresholds or {name: 0.5 for name in ATTRIBUTE_NAMES}
-    probabilities = 1.0 / (1.0 + np.exp(-logits))
-    return {name: bool(probabilities[index] >= thresholds.get(name, 0.5)) for index, name in enumerate(ATTRIBUTE_NAMES)}
+    del thresholds  # Multiclass output uses one argmax decision, not independent sigmoid cutoffs.
+    predicted_index = int(np.argmax(np.asarray(logits, dtype=np.float64)))
+    return {name: index == predicted_index for index, name in enumerate(ATTRIBUTE_NAMES)}

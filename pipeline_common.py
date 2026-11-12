@@ -8,33 +8,23 @@ import pandas as pd
 from PIL import Image, ImageDraw
 
 CLASS_NAMES = [
-    "MobilNormal",
-    "MobilSilau",
-    "MobilBerwarna",
-    "MobilSilauBerwarna",
-    "MotorNormal",
-    "MotorSilau",
-    "MotorBerwarna",
-    "MotorSilauBerwarna",
+    "MobilStandar",
+    "MobilTidakStandar",
+    "MotorStandar",
+    "MotorTidakStandar",
     "PantulanCahaya",
 ]
 PENDING_CLASS_NAME = "BelumDitentukan"
 TRAINING_CLASS_NAMES = [
-    "MobilNormal",
-    "MobilSilau",
-    "MotorNormal",
-    "MotorSilau",
+    "Mobil",
+    "Motor",
     "PantulanCahaya",
 ]
 TRAINING_CLASS_BY_ANNOTATION_CLASS = {
-    "MobilNormal": "MobilNormal",
-    "MobilSilau": "MobilSilau",
-    "MobilBerwarna": "MobilNormal",
-    "MobilSilauBerwarna": "MobilSilau",
-    "MotorNormal": "MotorNormal",
-    "MotorSilau": "MotorSilau",
-    "MotorBerwarna": "MotorNormal",
-    "MotorSilauBerwarna": "MotorSilau",
+    "MobilStandar": "Mobil",
+    "MobilTidakStandar": "Mobil",
+    "MotorStandar": "Motor",
+    "MotorTidakStandar": "Motor",
     "PantulanCahaya": "PantulanCahaya",
 }
 SPLIT_NAME_BY_CAMERA = {
@@ -48,33 +38,14 @@ MAX_CROP_SIDE = 640
 MOBIL_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Mobil")]
 MOTOR_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Motor")]
 COUNT_CONTRACT = {
-    "jumlah_kendaraan_mobil": MOBIL_CLASS_NAMES,
-    "jumlah_kendaraan_motor": MOTOR_CLASS_NAMES,
-    "jumlah_lampu_silau_mobil": ["MobilSilau", "MobilSilauBerwarna"],
-    "jumlah_lampu_silau_motor": ["MotorSilau", "MotorSilauBerwarna"],
-    "jumlah_lampu_berwarna_mobil": ["MobilBerwarna", "MobilSilauBerwarna"],
-    "jumlah_lampu_berwarna_motor": ["MotorBerwarna", "MotorSilauBerwarna"],
-    "jumlah_lampu_silau_dan_berwarna_mobil": ["MobilSilauBerwarna"],
-    "jumlah_lampu_silau_dan_berwarna_motor": ["MotorSilauBerwarna"],
+    "jumlah_bbox_mobil_tidak_standar": ["MobilTidakStandar"],
+    "jumlah_bbox_motor_tidak_standar": ["MotorTidakStandar"],
 }
 BOX_COUNT_CONTRACT = {
-    "jumlah_box_mobil": MOBIL_CLASS_NAMES,
-    "jumlah_box_motor": MOTOR_CLASS_NAMES,
-    "jumlah_box_lampu_silau_mobil": ["MobilSilau", "MobilSilauBerwarna"],
-    "jumlah_box_lampu_silau_motor": ["MotorSilau", "MotorSilauBerwarna"],
-    "jumlah_box_lampu_berwarna_mobil": ["MobilBerwarna", "MobilSilauBerwarna"],
-    "jumlah_box_lampu_berwarna_motor": ["MotorBerwarna", "MotorSilauBerwarna"],
-    "jumlah_box_lampu_silau_dan_berwarna_mobil": ["MobilSilauBerwarna"],
-    "jumlah_box_lampu_silau_dan_berwarna_motor": ["MotorSilauBerwarna"],
+    "jumlah_bbox_mobil": ["Mobil"],
+    "jumlah_bbox_motor": ["Motor"],
 }
-# NB06 requires the attribute classifier, so it can measure all eight contracts.
-# The detector's five classes only limit NB05's box-per-frame baseline.
-UNMEASURABLE_COUNT_CONTRACT_KEYS = []
-UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS = [
-    contract_key
-    for contract_key, contract_classes in BOX_COUNT_CONTRACT.items()
-    if not set(contract_classes) & set(TRAINING_CLASS_NAMES)
-]
+# NB05 melaporkan bbox deteksi per tipe kendaraan; kondisi lampu baru tersedia setelah CNN di NB06.
 FRAGMENT_MAX_GAP_FRAMES = 50
 FRAGMENT_MIN_IOU = 0.50
 FRAGMENT_DISTANCE_RATIO = 0.35
@@ -187,9 +158,9 @@ def build_roi_crop(
     return resized_image, offset_x, offset_y, scale
 
 
-def training_class_name(annotation_class_name: str) -> str:
-    """Petakan kelas anotasi ke kelas latih; kelas berwarna runtuh ke padanan tanpa warna."""
-    return TRAINING_CLASS_BY_ANNOTATION_CLASS[annotation_class_name]
+def training_class_name(annotation_class_name: str) -> str | None:
+    """Petakan anotasi reviewed ke target detector, termasuk kelas PantulanCahaya."""
+    return TRAINING_CLASS_BY_ANNOTATION_CLASS.get(annotation_class_name)
 
 
 def class_family(class_name: str) -> str:

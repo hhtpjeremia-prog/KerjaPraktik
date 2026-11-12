@@ -21,8 +21,6 @@ from pipeline_common import (
     BOX_COUNT_CONTRACT,
     CLASS_NAMES,
     COUNT_CONTRACT,
-    UNMEASURABLE_COUNT_CONTRACT_KEYS,
-    UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS,
     TRAINING_CLASS_NAMES,
     box_overlap_iou,
     filter_store_frames,
@@ -75,95 +73,80 @@ def count_vehicles(track_rows: list[dict]) -> int:
 
 
 def check_contract_rollup_is_complete() -> None:
-    assert COUNT_CONTRACT["jumlah_kendaraan_mobil"] == [
-        class_name for class_name in CLASS_NAMES if class_name.startswith("Mobil")
-    ]
-    assert COUNT_CONTRACT["jumlah_kendaraan_motor"] == [
-        class_name for class_name in CLASS_NAMES if class_name.startswith("Motor")
-    ]
+    assert COUNT_CONTRACT["jumlah_bbox_mobil_tidak_standar"] == ["MobilTidakStandar"]
+    assert COUNT_CONTRACT["jumlah_bbox_motor_tidak_standar"] == ["MotorTidakStandar"]
     for contract_key, contract_classes in COUNT_CONTRACT.items():
         unknown_classes = [class_name for class_name in contract_classes if class_name not in CLASS_NAMES]
         assert not unknown_classes, f"{contract_key} memuat kelas tak dikenal: {unknown_classes}"
-    assert "MobilSilauBerwarna" in COUNT_CONTRACT["jumlah_lampu_silau_mobil"]
-    assert "MobilSilauBerwarna" in COUNT_CONTRACT["jumlah_lampu_berwarna_mobil"]
-    assert COUNT_CONTRACT["jumlah_lampu_silau_dan_berwarna_mobil"] == ["MobilSilauBerwarna"]
-    assert COUNT_CONTRACT["jumlah_lampu_silau_dan_berwarna_motor"] == ["MotorSilauBerwarna"]
+    assert set(COUNT_CONTRACT) == {"jumlah_bbox_mobil_tidak_standar", "jumlah_bbox_motor_tidak_standar"}
 
 
 def check_box_contract_partitions_all_classes() -> None:
-    assert BOX_COUNT_CONTRACT["jumlah_box_mobil"] == COUNT_CONTRACT["jumlah_kendaraan_mobil"]
-    assert BOX_COUNT_CONTRACT["jumlah_box_motor"] == COUNT_CONTRACT["jumlah_kendaraan_motor"]
-    partition_total = (
-        len(BOX_COUNT_CONTRACT["jumlah_box_mobil"])
-        + len(BOX_COUNT_CONTRACT["jumlah_box_motor"])
-        + 1
-    )
-    assert partition_total == len(CLASS_NAMES)
-    assert "PantulanCahaya" not in sum(BOX_COUNT_CONTRACT.values(), [])
+    assert BOX_COUNT_CONTRACT == {"jumlah_bbox_mobil": ["Mobil"], "jumlah_bbox_motor": ["Motor"]}
+    assert set(CLASS_NAMES) == {
+        "MobilStandar", "MobilTidakStandar", "MotorStandar", "MotorTidakStandar", "PantulanCahaya"
+    }
+    assert set(sum(BOX_COUNT_CONTRACT.values(), [])) == set(TRAINING_CLASS_NAMES)
 
 
 def check_mobil_fragment_not_stitched_to_motor() -> None:
     vehicles_counted = count_vehicles([
-        build_track_row(1, "MobilSilau", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
-        build_track_row(2, "MotorSilau", 8, 12, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(1, "MobilTidakStandar", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(2, "MotorTidakStandar", 8, 12, SAME_PLACE_BOX, SAME_PLACE_BOX),
     ])
     assert vehicles_counted == 2, f"fragmen lintas jenis tersambung: {vehicles_counted} kendaraan"
 
 
 def check_overlapping_fragments_rejected() -> None:
     vehicles_counted = count_vehicles([
-        build_track_row(1, "MobilSilau", 1, 10, SAME_PLACE_BOX, SAME_PLACE_BOX),
-        build_track_row(2, "MobilSilau", 10, 14, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(1, "MobilTidakStandar", 1, 10, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(2, "MobilTidakStandar", 10, 14, SAME_PLACE_BOX, SAME_PLACE_BOX),
     ])
     assert vehicles_counted == 2, f"fragmen tumpang waktu tersambung: {vehicles_counted} kendaraan"
 
 
 def check_distant_fragments_rejected() -> None:
     vehicles_counted = count_vehicles([
-        build_track_row(1, "MotorNormal", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
-        build_track_row(2, "MotorNormal", 8, 12, FAR_PLACE_BOX, FAR_PLACE_BOX),
+        build_track_row(1, "MotorStandar", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(2, "MotorStandar", 8, 12, FAR_PLACE_BOX, FAR_PLACE_BOX),
     ])
     assert vehicles_counted == 2, f"fragmen berjauhan tersambung: {vehicles_counted} kendaraan"
 
 
 def check_gap_beyond_limit_rejected() -> None:
     vehicles_counted = count_vehicles([
-        build_track_row(1, "MobilNormal", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
-        build_track_row(2, "MobilNormal", 56, 60, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(1, "MobilStandar", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(2, "MobilStandar", 56, 60, SAME_PLACE_BOX, SAME_PLACE_BOX),
     ])
     assert vehicles_counted == 2, f"fragmen melewati batas jeda tersambung: {vehicles_counted} kendaraan"
 
 
 def check_adjacent_fragments_stitched() -> None:
     vehicles_counted = count_vehicles([
-        build_track_row(1, "MobilNormal", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
-        build_track_row(2, "MobilNormal", 8, 12, NEAR_PLACE_BOX, NEAR_PLACE_BOX),
+        build_track_row(1, "MobilStandar", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(2, "MobilTidakStandar", 8, 12, NEAR_PLACE_BOX, NEAR_PLACE_BOX),
     ])
     assert vehicles_counted == 1, f"fragmen bersambung tidak menyatu: {vehicles_counted} kendaraan"
 
 
 def check_chain_of_fragments_stitched() -> None:
     vehicles_counted = count_vehicles([
-        build_track_row(1, "MotorBerwarna", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
-        build_track_row(2, "MotorBerwarna", 8, 12, NEAR_PLACE_BOX, NEAR_PLACE_BOX),
-        build_track_row(3, "MotorBerwarna", 15, 19, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(1, "MotorStandar", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
+        build_track_row(2, "MotorTidakStandar", 8, 12, NEAR_PLACE_BOX, NEAR_PLACE_BOX),
+        build_track_row(3, "MotorStandar", 15, 19, SAME_PLACE_BOX, SAME_PLACE_BOX),
     ])
     assert vehicles_counted == 1, f"rantai fragmen tidak menyatu: {vehicles_counted} kendaraan"
 
 
-def check_reflection_stays_separate() -> None:
-    vehicles_counted = count_vehicles([
-        build_track_row(1, "MobilSilau", 1, 5, SAME_PLACE_BOX, SAME_PLACE_BOX),
-        build_track_row(2, "PantulanCahaya", 8, 12, SAME_PLACE_BOX, SAME_PLACE_BOX),
-    ])
-    assert vehicles_counted == 2, f"pantulan menyatu ke kendaraan: {vehicles_counted} kendaraan"
+def check_reflection_is_excluded_from_detector() -> None:
+    assert training_class_name("PantulanCahaya") is None
 
 
 def check_tracker_threshold_guard() -> None:
-    validate_tracker_thresholds({"new_track_thresh": 0.05}, {"MobilSilau": 0.05, "MotorNormal": 0.30})
-    validate_tracker_thresholds({"new_track_thresh": 0.02}, {"MobilSilau": 0.05, "MotorNormal": 0.30})
+    validate_tracker_thresholds({"new_track_thresh": 0.05}, {"Mobil": 0.05, "Motor": 0.30})
+    validate_tracker_thresholds({"new_track_thresh": 0.02}, {"Mobil": 0.05, "Motor": 0.30})
     try:
-        validate_tracker_thresholds({"new_track_thresh": 0.35}, {"MobilSilau": 0.05, "MotorNormal": 0.30})
+        validate_tracker_thresholds({"new_track_thresh": 0.35}, {"Mobil": 0.05, "Motor": 0.30})
     except ValueError:
         return
     raise AssertionError("guard ambang tracker tidak menolak new_track_thresh yang terlalu tinggi")
@@ -175,27 +158,12 @@ def check_iou_bounds() -> None:
 
 
 def check_training_class_names() -> None:
-    assert TRAINING_CLASS_NAMES == [
-        "MobilNormal",
-        "MobilSilau",
-        "MotorNormal",
-        "MotorSilau",
-        "PantulanCahaya",
-    ]
-    assert training_class_name("MobilBerwarna") == "MobilNormal"
-    assert training_class_name("MobilSilauBerwarna") == "MobilSilau"
-    assert training_class_name("MotorBerwarna") == "MotorNormal"
-    assert training_class_name("MotorSilauBerwarna") == "MotorSilau"
-    assert training_class_name("PantulanCahaya") == "PantulanCahaya"
-    unmeasurable = sorted(UNMEASURABLE_COUNT_CONTRACT_KEYS)
-    assert unmeasurable == [], unmeasurable
-    unmeasurable_box = sorted(UNMEASURABLE_BOX_COUNT_CONTRACT_KEYS)
-    assert unmeasurable_box == [
-        "jumlah_box_lampu_berwarna_mobil",
-        "jumlah_box_lampu_berwarna_motor",
-        "jumlah_box_lampu_silau_dan_berwarna_mobil",
-        "jumlah_box_lampu_silau_dan_berwarna_motor",
-    ], unmeasurable_box
+    assert TRAINING_CLASS_NAMES == ["Mobil", "Motor"]
+    assert training_class_name("MobilStandar") == "Mobil"
+    assert training_class_name("MobilTidakStandar") == "Mobil"
+    assert training_class_name("MotorStandar") == "Motor"
+    assert training_class_name("MotorTidakStandar") == "Motor"
+    assert training_class_name("PantulanCahaya") is None
 
 
 def check_attributes_features_are_finite() -> None:
@@ -244,40 +212,52 @@ def check_dashboard_camera_table_sums_per_camera() -> None:
             {
                 "video_stem": "video_a",
                 "camera_id": "bogor-kab-pdam2",
-                "vehicles_counted": 4,
-                "jumlah_kendaraan_mobil": 3,
-                "jumlah_kendaraan_motor": 1,
-                "jumlah_lampu_berwarna_mobil": 1,
+                "bbox_counted": 4,
+                "MobilStandar": 7,
+                "MobilTidakStandar": 3,
+                "MotorStandar": 5,
+                "MotorTidakStandar": 1,
+                "PantulanCahaya": 0,
+                "jumlah_bbox_mobil_tidak_standar": 3,
+                "jumlah_bbox_motor_tidak_standar": 1,
             },
             {
                 "video_stem": "video_b",
                 "camera_id": "bogor-kab-pdam2",
-                "vehicles_counted": 2,
-                "jumlah_kendaraan_mobil": 2,
-                "jumlah_kendaraan_motor": 0,
-                "jumlah_lampu_berwarna_mobil": 2,
+                "bbox_counted": 2,
+                "MobilStandar": 2,
+                "MobilTidakStandar": 2,
+                "MotorStandar": 0,
+                "MotorTidakStandar": 0,
+                "PantulanCahaya": 0,
+                "jumlah_bbox_mobil_tidak_standar": 2,
+                "jumlah_bbox_motor_tidak_standar": 0,
             },
             {
                 "video_stem": "video_c",
                 "camera_id": "bogor-kab-bappenda2",
-                "vehicles_counted": 5,
-                "jumlah_kendaraan_mobil": 1,
-                "jumlah_kendaraan_motor": 4,
-                "jumlah_lampu_berwarna_mobil": "n/a",
+                "bbox_counted": 5,
+                "MobilStandar": 1,
+                "MobilTidakStandar": 1,
+                "MotorStandar": 1,
+                "MotorTidakStandar": 4,
+                "PantulanCahaya": 0,
+                "jumlah_bbox_mobil_tidak_standar": 1,
+                "jumlah_bbox_motor_tidak_standar": 4,
             },
         ]
     )
     camera_table = build_camera_table(per_video_frame)
     camera_totals = camera_table.set_index("camera_id")
-    assert camera_totals.loc["bogor-kab-pdam2", "vehicles_counted"] == 6
+    assert camera_totals.loc["bogor-kab-pdam2", "bbox_counted"] == 6
     assert camera_totals.loc["bogor-kab-pdam2", "videos_counted"] == 2
-    assert camera_totals.loc["bogor-kab-bappenda2", "jumlah_kendaraan_motor"] == 4
-    assert "jumlah_lampu_berwarna_mobil" in camera_table.columns
+    assert camera_totals.loc["bogor-kab-bappenda2", "jumlah_bbox_motor_tidak_standar"] == 4
+    assert "jumlah_bbox_mobil_tidak_standar" in camera_table.columns
     status_frame = build_camera_status_table(camera_table, ["test"])
     status_by_camera = status_frame.set_index("camera_id")
     assert status_by_camera.loc["bogor-kab-pdam2", "status"] == CAMERA_STATUS_COUNTED
     assert "di luar split hitung (train)" in status_by_camera.loc["bogor-kab-bappenda1", "status"]
-    assert pd.isna(status_by_camera.loc["bogor-kab-bappenda1", "vehicles_counted"])
+    assert pd.isna(status_by_camera.loc["bogor-kab-bappenda1", "bbox_counted"])
 
 
 def main() -> None:
@@ -290,7 +270,7 @@ def main() -> None:
         check_gap_beyond_limit_rejected,
         check_adjacent_fragments_stitched,
         check_chain_of_fragments_stitched,
-        check_reflection_stays_separate,
+        check_reflection_is_excluded_from_detector,
         check_tracker_threshold_guard,
         check_iou_bounds,
         check_training_class_names,

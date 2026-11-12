@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build NB06_tracking_count.ipynb: hitung kendaraan unik dengan ByteTrack di dalam ROI."""
+"""Build NB06_tracking_count.ipynb: hitung bbox tidak standar per frame di dalam ROI."""
 
 import sys
 from pathlib import Path
@@ -17,11 +17,11 @@ OUTPUT_NOTEBOOK = PROJECT_ROOT / "NB06_tracking_count.ipynb"
 EXPECTED_CODE_CELL_COUNT = 6
 EXPECTED_MARKDOWN_CELL_COUNT = 1
 
-NAVBAR_MARKDOWN = """# NB06 — Hitung Kendaraan Unik (ByteTrack, hanya di dalam ROI)
+NAVBAR_MARKDOWN = """# NB06 — Hitung Bbox Tidak Standar per Frame
 
 NB05 menghitung **box per frame sampel**, sehingga satu kendaraan bisa terhitung berkali-kali.
-NB06 menghitung **kendaraan unik**: satu kendaraan = satu track, dihitung sekali sejak muncul di
-dalam ROI sampai keluar.
+NB06 menghitung **bbox tidak standar per frame**. ByteTrack tetap dipakai untuk memberikan `track_id`
+dan stabilitas temporal, tetapi angka utama tidak diagregasi menjadi kendaraan unik.
 
 **Posisi:** `NB02 → NB02b → NB03 → NB04 → NB05 (kalibrasi) → NB06 (hitung unik)`
 
@@ -58,8 +58,8 @@ rumusnya tetap umum supaya tidak diam-diam salah kalau ROI berubah. Audit pemeta
 4. Kelas per track = **suara mayoritas** di antara frame yang lolos ambang; seri diputus oleh skor
    rata-rata lebih tinggi. Alasannya: kondisi lampu satu kendaraan bisa terbaca berbeda antar frame,
    dan satu kendaraan hanya boleh menyumbang satu angka.
-5. Angka tetap dijumlahkan dari kelas dengan kontrak MASTER §10.6. `PantulanCahaya` tetap
-   hard-negative dan tidak pernah dihitung.
+5. YOLO mendeteksi tiga kelas (`Mobil`, `Motor`, `PantulanCahaya`) dan CNN memprediksi `Standar`, `TidakStandar`, atau `PantulanCahaya`. Pantulan disaring sebelum ByteTrack, tidak digambar, dan tidak dihitung.
+   Kelas ini tidak dihitung dan tidak digambar pada overlay.
 
 ## Ambang internal tracker
 
@@ -70,7 +70,11 @@ kurang terhitung secara sistematis. Karena itu NB06 memakai `builders/bytetrack_
 (`new_track_thresh 0.05`, `track_high_thresh 0.05`, `track_low_thresh 0.02`, `track_buffer 30`),
 yaitu lantai yang sama dengan lantai detektor. Sel JOBS menolak jalan bila `new_track_thresh` lebih
 tinggi dari ambang kelas terendah. Tracker hanya mengurus asosiasi antar frame; penyaringan akhir
-tetap dilakukan ambang per kelas hasil NB05 saat agregasi track.
+tetap dilakukan ambang per kelas hasil NB05 saat agregasi track. Sebelum update ByteTrack, NB06
+membuang deteksi dengan koordinat non-finite atau lebar/tinggi < 1 px. Jika update Kalman tetap
+singular, tracker di-reset sambil mempertahankan urutan ID, dicoba sekali lagi, lalu frame dicatat
+sebagai terlewat bila masih gagal. Ringkasan video memuat jumlah deteksi yang dibuang, recovery,
+dan frame yang terlewat.
 
 ## Satu rekaman per kamera
 
@@ -110,6 +114,7 @@ import json
 import os
 
 import cv2
+import numpy as np
 import pandas as pd
 import torch
 from IPython.display import Markdown, display
@@ -119,18 +124,16 @@ from pipeline_common import (
     TRAINING_CLASS_NAMES,
     TRAINING_CLASS_BY_ANNOTATION_CLASS,
     COUNT_CONTRACT,
-    UNMEASURABLE_COUNT_CONTRACT_KEYS,
     FRAGMENT_DISTANCE_RATIO,
     FRAGMENT_MAX_GAP_FRAMES,
     FRAGMENT_MIN_IOU,
     SPLIT_NAME_BY_CAMERA,
     build_roi_crop,
-    mask_frame_to_roi,
     load_roi_config,
     stitch_track_fragments,
     validate_tracker_thresholds,
 )
-from attribute_classifier import decode_attributes, extract_pixel_features, load_classifier
+from attribute_classifier import IMAGE_TRANSFORM, decode_attributes, extract_image_crop, load_classifier
 
 RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
 if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
@@ -174,6 +177,7 @@ TRACKER_CONFIG = str(TRACKER_CONFIG_PATH)
 IMAGE_SIZE = 640
 CONF_FLOOR = 0.05
 NMS_IOU = 0.70
+MIN_TRACK_BOX_SIDE_PX = 1.0
 FRAME_STRIDE = 1
 MIN_TRACK_HITS = 2 if SMOKE_MODE else 3
 SMOKE_MAX_FRAMES_PER_VIDEO = 60
@@ -181,11 +185,7 @@ VIDEO_EXTENSION = ".mp4"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 EVENT_COLORS_BGR = {
-    "Normal": (235, 235, 235),
-    "Silau": (0, 165, 255),
-    "Berwarna": (255, 210, 0),
-    "SilauBerwarna": (255, 0, 255),
-    "PantulanCahaya": (150, 150, 150),
+    "TidakStandar": (0, 0, 255),
 }
 
 pd.set_option("display.width", 220)
@@ -194,7 +194,8 @@ pd.set_option("display.max_columns", 40)
 display(Markdown(
     f"NB06 siap. Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · device: **{DEVICE}** · "
     f"bobot: `{WEIGHTS_PATH}` (ada: **{WEIGHTS_PATH.exists()}**) · split dihitung: {COUNTED_SPLITS} · "
-    f"minimal {MIN_TRACK_HITS} kemunculan per track · overlay label: **{OVERLAY_LABELS}**"
+    f"audit/galeri kendaraan unik: minimal {MIN_TRACK_HITS} kemunculan per track · "
+    f"overlay label: **{OVERLAY_LABELS}**"
 ))'''
 
 JOBS_SOURCE = '''def load_json_document(path: Path) -> dict:
@@ -370,29 +371,46 @@ def draw_debug_label(
 
 
 attribute_model, attribute_mean, attribute_std, attribute_metadata = load_classifier(ATTRIBUTE_MODEL_PATH, DEVICE)
+if attribute_metadata.get("model_type") != "resnet18_hsv_fusion":
+    raise RuntimeError(
+        "Checkpoint classifier tidak kompatibel. Latih ulang dengan "
+        "`python builders/train_attribute_classifier.py` sebelum menjalankan NB06."
+    )
+if tuple(attribute_metadata.get("attribute_names", ())) != ("standar", "tidak_standar", "pantulan_cahaya"):
+    raise RuntimeError("Checkpoint CNN belum memakai tiga label aktif; latih ulang NB04b.")
 
 
-def classify_vehicle_attributes(crop_image: Image.Image, crop_box: list[float]) -> str:
-    features = extract_pixel_features(crop_image, crop_box)
-    normalised = (features - attribute_mean) / attribute_std
+def classify_vehicle_condition(crop_image: Image.Image, crop_box: list[float]) -> str:
+    crop = extract_image_crop(crop_image, crop_box)
+    image_tensor = IMAGE_TRANSFORM(crop).unsqueeze(0).to(DEVICE)
+    raw_features = extract_pixel_features(crop, [0, 0, crop.width, crop.height])
+    normalized_features = (raw_features - attribute_mean) / np.maximum(attribute_std, 1e-6)
+    feature_tensor = torch.from_numpy(normalized_features.astype(np.float32)).unsqueeze(0).to(DEVICE)
     with torch.no_grad():
-        logits = attribute_model(torch.from_numpy(normalised).to(DEVICE).unsqueeze(0)).squeeze(0).cpu().numpy()
+        logits = attribute_model(image_tensor, feature_tensor).squeeze(0).cpu().numpy()
         attributes = decode_attributes(logits, attribute_metadata.get("thresholds"))
-    if attributes["silau"] and attributes["berwarna"]:
-        return "SilauBerwarna"
-    if attributes["silau"]:
-        return "Silau"
-    if attributes["berwarna"]:
-        return "Berwarna"
-    return "Normal"
+    if attributes["pantulan_cahaya"]:
+        return "PantulanCahaya"
+    return "TidakStandar" if attributes["tidak_standar"] else "Standar"
 
 
 def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
     tracking_model = YOLO(str(WEIGHTS_PATH))
+    model_names = [tracking_model.names[index] for index in sorted(tracking_model.names)]
+    if model_names != TRAINING_CLASS_NAMES:
+        raise RuntimeError(
+            f"Checkpoint YOLO memakai kelas {model_names}; kontrak aktif {TRAINING_CLASS_NAMES}. "
+            "Latih ulang NB04 sebelum NB06."
+        )
+    vehicle_class_ids = [i for i, name in enumerate(TRAINING_CLASS_NAMES) if name in {"Mobil", "Motor"}]
     video_capture = cv2.VideoCapture(job["video_path"])
     tracking_rows = []
     audit_rows = []
+    condition_by_track: dict[int, str] = {}
     untracked_detection_count = 0
+    invalid_tracker_detection_count = 0
+    tracker_recovery_count = 0
+    tracker_skipped_frame_count = 0
     processed_frame_count = 0
     frame_index = 0
     overlay_path = OVERLAY_DIR / f"{job['video_stem']}_overlay.mp4"
@@ -403,6 +421,40 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
     if not overlay_writer.isOpened():
         video_capture.release()
         raise RuntimeError(f"gagal membuat video overlay: {overlay_path}")
+
+    def sanitize_tracker_detections(predictor) -> None:
+        nonlocal invalid_tracker_detection_count
+        for result_index, result in enumerate(predictor.results):
+            boxes = result.boxes
+            if boxes is None or len(boxes) == 0:
+                continue
+            xyxy = boxes.xyxy
+            widths = xyxy[:, 2] - xyxy[:, 0]
+            heights = xyxy[:, 3] - xyxy[:, 1]
+            valid = torch.isfinite(xyxy).all(dim=1) & torch.isfinite(boxes.conf)
+            valid &= (widths >= MIN_TRACK_BOX_SIDE_PX) & (heights >= MIN_TRACK_BOX_SIDE_PX)
+            if not bool(valid.all()):
+                invalid_tracker_detection_count += int((~valid).sum().item())
+                predictor.results[result_index] = result[valid]
+
+    # This callback runs after detector postprocessing but before Ultralytics updates ByteTrack.
+    # A zero-area/non-finite box can make the XYAH Kalman covariance singular.
+    tracking_model.add_callback("on_predict_postprocess_end", sanitize_tracker_detections)
+
+    def reset_tracker_preserving_ids() -> bool:
+        trackers = getattr(tracking_model.predictor, "trackers", None)
+        if not trackers:
+            return False
+        from ultralytics.trackers.basetrack import BaseTrack
+
+        next_track_id = BaseTrack._count
+        for tracker in trackers:
+            tracker.reset()
+        # BYTETracker.reset() resets the process-wide ID counter; preserve it to avoid
+        # reusing an ID that already exists in this video's rows.
+        BaseTrack._count = next_track_id
+        return True
+
     try:
         while True:
             read_ok, frame_array = video_capture.read()
@@ -410,11 +462,12 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                 break
             if frame_index % FRAME_STRIDE == 0:
                 frame_image = Image.fromarray(cv2.cvtColor(frame_array, cv2.COLOR_BGR2RGB))
-                detector_image = mask_frame_to_roi(frame_image, roi_config[job["camera_id"]])
+                crop_image, offset_x, offset_y, scale = build_roi_crop(
+                    frame_image, roi_config[job["camera_id"]]
+                )
+                if scale <= 0:
+                    raise ValueError(f"skala ROI tidak valid untuk {job['video_stem']}: {scale}")
                 if processed_frame_count == 0:
-                    crop_image, offset_x, offset_y, scale = build_roi_crop(
-                        frame_image, roi_config[job["camera_id"]]
-                    )
                     audit_rows.append({
                         "video_stem": job["video_stem"],
                         "camera_id": job["camera_id"],
@@ -426,18 +479,33 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                         "offset_y": offset_y,
                         "scale": round(float(scale), 6),
                     })
-                tracking_result = tracking_model.track(
-                    source=detector_image,
-                    persist=True,
-                    tracker=TRACKER_CONFIG,
-                    conf=CONF_FLOOR,
-                    iou=NMS_IOU,
-                    imgsz=IMAGE_SIZE,
-                    device=DEVICE,
-                    verbose=False,
-                )[0]
+                track_arguments = {
+                    "source": crop_image,
+                    "persist": True,
+                    "tracker": TRACKER_CONFIG,
+                    "classes": vehicle_class_ids,
+                    "conf": CONF_FLOOR,
+                    "iou": NMS_IOU,
+                    "imgsz": IMAGE_SIZE,
+                    "device": DEVICE,
+                    "verbose": False,
+                }
+                try:
+                    tracking_result = tracking_model.track(**track_arguments)[0]
+                except np.linalg.LinAlgError as error:
+                    if "singular" not in str(error).lower() or not reset_tracker_preserving_ids():
+                        raise
+                    tracker_recovery_count += 1
+                    try:
+                        tracking_result = tracking_model.track(**track_arguments)[0]
+                    except np.linalg.LinAlgError as retry_error:
+                        if "singular" not in str(retry_error).lower():
+                            raise
+                        reset_tracker_preserving_ids()
+                        tracker_skipped_frame_count += 1
+                        tracking_result = None
                 processed_frame_count += 1
-                frame_boxes = tracking_result.boxes
+                frame_boxes = tracking_result.boxes if tracking_result is not None else None
                 overlay_frame = frame_array.copy()
                 if frame_boxes is not None and len(frame_boxes) > 0:
                     box_coordinates = frame_boxes.xyxy.cpu().numpy()
@@ -446,28 +514,36 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                     box_track_ids = frame_boxes.id.cpu().numpy().astype(int) if frame_boxes.id is not None else None
                     for box_index in range(len(box_scores)):
                         crop_box = [float(coordinate) for coordinate in box_coordinates[box_index]]
-                        frame_box = crop_box
+                        frame_box = [
+                            offset_x + crop_box[0] / scale,
+                            offset_y + crop_box[1] / scale,
+                            offset_x + crop_box[2] / scale,
+                            offset_y + crop_box[3] / scale,
+                        ]
                         detector_class_name = TRAINING_CLASS_NAMES[box_classes[box_index]]
                         x1, y1, x2, y2 = [int(round(value)) for value in frame_box]
                         track_id = int(box_track_ids[box_index]) if box_track_ids is not None else None
                         if track_id is None:
                             untracked_detection_count += 1
                             continue
-                        if detector_class_name.startswith(("Mobil", "Motor")):
-                            vehicle_type = "Mobil" if detector_class_name.startswith("Mobil") else "Motor"
-                            attribute_suffix = classify_vehicle_attributes(frame_image, frame_box)
-                            output_class_name = vehicle_type + attribute_suffix
+                        if detector_class_name in {"Mobil", "Motor"}:
+                            vehicle_type = detector_class_name
+                            if track_id not in condition_by_track:
+                                condition_by_track[track_id] = classify_vehicle_condition(frame_image, frame_box)
+                            condition = condition_by_track[track_id]
+                            output_class_name = "PantulanCahaya" if condition == "PantulanCahaya" else vehicle_type + condition
                         else:
                             output_class_name = detector_class_name
-                        event_suffix = output_class_name.removeprefix(vehicle_type) if detector_class_name.startswith(("Mobil", "Motor")) else "PantulanCahaya"
-                        overlay_color = EVENT_COLORS_BGR.get(event_suffix, EVENT_COLORS_BGR["PantulanCahaya"])
-                        cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), overlay_color, 2)
-                        if OVERLAY_LABELS:
-                            overlay_label = f"ID {track_id} · {box_scores[box_index] * 100:.0f}%"
-                            draw_debug_label(
-                                overlay_frame, overlay_label, overlay_color,
-                                (x1, y1, x2, y2),
-                            )
+                        is_nonstandard = output_class_name in {"MobilTidakStandar", "MotorTidakStandar"}
+                        if is_nonstandard:
+                            overlay_color = EVENT_COLORS_BGR["TidakStandar"]
+                            cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), overlay_color, 2)
+                            if OVERLAY_LABELS:
+                                overlay_label = f"ID {track_id} · {box_scores[box_index] * 100:.0f}%"
+                                draw_debug_label(
+                                    overlay_frame, overlay_label, overlay_color,
+                                    (x1, y1, x2, y2),
+                                )
                         tracking_rows.append({
                             "video_stem": job["video_stem"],
                             "camera_id": job["camera_id"],
@@ -494,6 +570,9 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
         "frames_processed": processed_frame_count,
         "detections": len(tracking_rows),
         "untracked_detections": untracked_detection_count,
+        "invalid_tracker_detections_removed": invalid_tracker_detection_count,
+        "tracker_recoveries": tracker_recovery_count,
+        "tracker_frames_skipped_after_recovery": tracker_skipped_frame_count,
         "overlay_path": str(overlay_path),
     }
     return tracking_rows, video_summary, audit_rows
@@ -509,7 +588,10 @@ for job in scan_jobs:
     mapping_audit_rows.extend(audit_rows)
     display(Markdown(
         f"`{job['video_stem']}` selesai — {video_summary['frames_processed']} frame, "
-        f"{video_summary['detections']} deteksi, {video_summary['untracked_detections']} tanpa track id."
+        f"{video_summary['detections']} deteksi, {video_summary['untracked_detections']} tanpa track id, "
+        f"{video_summary['invalid_tracker_detections_removed']} box degenerat dibuang, "
+        f"{video_summary['tracker_recoveries']} recovery Kalman, "
+        f"{video_summary['tracker_frames_skipped_after_recovery']} frame terlewat."
     ))
 
 tracking_frame = pd.DataFrame(
@@ -548,8 +630,6 @@ if not SMOKE_MODE and total_tracked == 0 and total_untracked > 0:
 COUNT_SOURCE = '''def qualify_by_class_threshold(detection_frame: pd.DataFrame) -> pd.DataFrame:
     if detection_frame.empty:
         return detection_frame.copy()
-    # Kelas berwarna adalah hasil NB04b, sehingga memakai threshold detector
-    # dari pasangan kelas dasarnya (Normal/Silau), bukan NaN.
     threshold_series = detection_frame["class_name"].map(effective_thresholds)
     return detection_frame[detection_frame["score"] >= threshold_series].copy()
 
@@ -617,19 +697,6 @@ if vehicle_detections["vehicle_id"].isna().any():
 vehicle_frame = summarise_units(vehicle_detections, "vehicle_id")
 counted_vehicle_frame = vehicle_frame[vehicle_frame["hits"] >= MIN_TRACK_HITS].copy()
 
-timeline_frame = counted_vehicle_frame.rename(columns={"unit_id": "vehicle_id"})[
-    ["video_stem", "camera_id", "vehicle_id", "class_name", "hits", "first_frame", "last_frame", "mean_score"]
-].copy()
-timeline_frame["fps"] = timeline_frame["video_stem"].map(
-    {row.video_stem: float(row.fps) for row in scan_frame.itertuples()}
-)
-timeline_frame["first_timestamp_seconds"] = timeline_frame["first_frame"] / timeline_frame["fps"]
-timeline_frame["last_timestamp_seconds"] = timeline_frame["last_frame"] / timeline_frame["fps"]
-timeline_frame["scope"] = timeline_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
-    lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
-)
-timeline_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
-
 presentation_qualified_frame = qualify_by_class_threshold(tracking_frame)
 presentation_track_frame = summarise_units(presentation_qualified_frame, "track_id")
 presentation_stitch_lookup = stitch_track_fragments(presentation_track_frame)
@@ -657,39 +724,75 @@ presentation_timeline_frame["last_timestamp_seconds"] = presentation_timeline_fr
 presentation_timeline_frame["scope"] = presentation_timeline_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
     lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
 )
-timeline_frame = presentation_timeline_frame
+event_timeline_frame = presentation_timeline_frame
+
+nonstandard_frame = tracking_frame[
+    tracking_frame["class_name"].isin({"MobilTidakStandar", "MotorTidakStandar"})
+].copy()
+bbox_counted_frame = qualify_by_class_threshold(nonstandard_frame)
+timeline_frame = bbox_counted_frame.rename(columns={"frame_index": "counting_frame"}).copy()
+timeline_frame["bbox_id"] = (
+    timeline_frame["video_stem"].astype(str)
+    + "__frame_" + timeline_frame["counting_frame"].astype(str)
+    + "__track_" + timeline_frame["track_id"].astype(str)
+)
+timeline_frame["fps"] = timeline_frame["video_stem"].map(
+    {row.video_stem: float(row.fps) for row in scan_frame.itertuples()}
+)
+timeline_frame["timestamp_seconds"] = timeline_frame["counting_frame"] / timeline_frame["fps"]
+timeline_frame["scope"] = timeline_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
+    lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
+)
 timeline_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
 
+official_bbox_frame = bbox_counted_frame[
+    bbox_counted_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).isin(COUNTED_SPLITS)
+].copy()
+official_qualified_frame = qualified_frame[
+    qualified_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).isin(COUNTED_SPLITS)
+].copy()
 class_counts = {
-    class_name: int((counted_vehicle_frame["class_name"] == class_name).sum())
+    class_name: int((official_qualified_frame["class_name"] == class_name).sum())
+    for class_name in CLASS_NAMES
+}
+event_class_counts = {
+    class_name: int((official_bbox_frame["class_name"] == class_name).sum())
     for class_name in CLASS_NAMES
 }
 counting_totals = {
-    contract_key: "n/a"
-    if contract_key in UNMEASURABLE_COUNT_CONTRACT_KEYS
-    else int(sum(class_counts[class_name] for class_name in contract_classes))
+    contract_key: int(sum(event_class_counts[class_name] for class_name in contract_classes))
     for contract_key, contract_classes in COUNT_CONTRACT.items()
 }
 
 per_video_rows = []
-for video_stem, video_slice in counted_vehicle_frame.groupby("video_stem", sort=True):
+for video_job in sorted(
+    (job for job in scan_jobs if job["split"] in COUNTED_SPLITS),
+    key=lambda job: job["video_stem"],
+):
+    video_stem = video_job["video_stem"]
+    video_slice = official_qualified_frame[official_qualified_frame["video_stem"] == video_stem]
+    event_slice = official_bbox_frame[official_bbox_frame["video_stem"] == video_stem]
     video_class_counts = {
         class_name: int((video_slice["class_name"] == class_name).sum())
         for class_name in CLASS_NAMES
     }
     per_video_rows.append({
         "video_stem": video_stem,
-        "camera_id": video_slice["camera_id"].iloc[0],
-        "vehicles_counted": int(len(video_slice)),
+        "camera_id": video_job["camera_id"],
+        "bbox_counted": int(len(event_slice)),
         **video_class_counts,
         **{
-            contract_key: "n/a"
-            if contract_key in UNMEASURABLE_COUNT_CONTRACT_KEYS
-            else int(sum(video_class_counts[class_name] for class_name in contract_classes))
+            contract_key: int(sum(
+                (event_slice["class_name"] == class_name).sum()
+                for class_name in contract_classes
+            ))
             for contract_key, contract_classes in COUNT_CONTRACT.items()
         },
     })
-per_video_frame = pd.DataFrame(per_video_rows)
+per_video_columns = [
+    "video_stem", "camera_id", "bbox_counted", *CLASS_NAMES, *COUNT_CONTRACT.keys()
+]
+per_video_frame = pd.DataFrame(per_video_rows, columns=per_video_columns)
 per_video_frame.to_csv(COUNTING_BY_VIDEO_PATH, index=False)
 
 overlay_manifest = []
@@ -711,7 +814,7 @@ OVERLAY_MANIFEST_PATH.write_text(
 event_clip_manifest = []
 video_path_by_stem = {job["video_stem"]: job["video_path"] for job in scan_jobs}
 for overlay_info in overlay_manifest:
-    video_events = timeline_frame[timeline_frame["video_stem"] == overlay_info["video_stem"]]
+    video_events = event_timeline_frame[event_timeline_frame["video_stem"] == overlay_info["video_stem"]]
     if video_events.empty:
         continue
     overlay_capture = cv2.VideoCapture(overlay_info["overlay_path"])
@@ -798,12 +901,12 @@ display(Markdown(
     f"Deteksi lolos ambang: **{len(qualified_frame)}** box · "
     f"track mentah: **{tracks_total}** · setelah penyambungan fragmen: **{vehicles_total}** kendaraan "
     f"(**{fragments_stitched}** fragmen disambung) · "
-    f"dihitung (>= {MIN_TRACK_HITS} kemunculan): **{len(counted_vehicle_frame)}** · "
+    f"audit kendaraan unik (>= {MIN_TRACK_HITS} kemunculan): **{len(counted_vehicle_frame)}** · "
     f"rasio duplikasi vs hitung per frame: **{duplication_factor:.1f}x**"
 ))
 display(Markdown(f"### Fragmen yang disambung ({len(fragment_merges)} kendaraan)"))
 display(fragment_merges.head(20))
-display(Markdown("### Keluaran wajib (kontrak MASTER §10.6, satuan kendaraan unik)"))
+display(Markdown("### Keluaran wajib (bbox tidak standar per frame)"))
 display(pd.DataFrame([{"keluaran": key, "jumlah": value} for key, value in counting_totals.items()]))
 display(Markdown("### Rincian per video"))
 display(per_video_frame)'''
@@ -813,14 +916,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 labelled_totals = {
-    "kendaraan mobil": counting_totals["jumlah_kendaraan_mobil"],
-    "kendaraan motor": counting_totals["jumlah_kendaraan_motor"],
-    "silau mobil": counting_totals["jumlah_lampu_silau_mobil"],
-    "silau motor": counting_totals["jumlah_lampu_silau_motor"],
-    "berwarna mobil": counting_totals["jumlah_lampu_berwarna_mobil"],
-    "berwarna motor": counting_totals["jumlah_lampu_berwarna_motor"],
-    "silau+berwarna mobil": counting_totals["jumlah_lampu_silau_dan_berwarna_mobil"],
-    "silau+berwarna motor": counting_totals["jumlah_lampu_silau_dan_berwarna_motor"],
+    "bbox mobil": counting_totals["jumlah_bbox_mobil_tidak_standar"],
+    "bbox motor": counting_totals["jumlah_bbox_motor_tidak_standar"],
 }
 
 figure, axis = plt.subplots(figsize=(12, 5))
@@ -829,9 +926,9 @@ bar_positions = range(len(plot_totals))
 axis.bar(bar_positions, list(plot_totals.values()), color="#1F7A4D")
 axis.set_xticks(list(bar_positions))
 axis.set_xticklabels(list(plot_totals.keys()), rotation=30, ha="right")
-axis.set_ylabel("jumlah kendaraan unik")
+axis.set_ylabel("jumlah bbox per frame")
 axis.set_title(
-    f"NB06 — kendaraan unik di dalam ROI ({len(counted_vehicle_frame)} kendaraan)"
+    f"NB06 — bbox tidak standar di dalam ROI ({len(official_bbox_frame)} bbox)"
     + (" (SMOKE, bukan hasil riset)" if SMOKE_MODE else "")
 )
 for position, value in zip(bar_positions, plot_totals.values()):
@@ -846,7 +943,7 @@ counting_summary_payload = {
     "weights": str(WEIGHTS_PATH),
     "tracker": TRACKER_CONFIG,
     "counted_splits": COUNTED_SPLITS,
-    "unit": "kendaraan unik per video (satu track dihitung satu kali)",
+    "unit": "bbox per frame (satu baris = satu bbox tidak standar pada satu frame)",
     "frames_processed": int(video_summary_frame["frames_processed"].sum()),
     "raw_detections": int(len(tracking_frame)),
     "untracked_detections": total_untracked,
@@ -854,7 +951,9 @@ counting_summary_payload = {
     "tracks_total": tracks_total,
     "vehicles_total": vehicles_total,
     "fragments_stitched": fragments_stitched,
-    "vehicles_counted": int(len(counted_vehicle_frame)),
+    "bbox_counted": int(len(official_bbox_frame)),
+    "unique_vehicles_audit": int(len(counted_vehicle_frame)),
+    "presentation_bbox_counted": int(len(bbox_counted_frame) - len(official_bbox_frame)),
     "videos_found": int(len(discovery_frame)),
     "videos_counted": int(len(scan_jobs)),
     "min_track_hits": MIN_TRACK_HITS,
@@ -862,6 +961,7 @@ counting_summary_payload = {
     "min_fragment_iou": FRAGMENT_MIN_IOU,
     "duplication_factor_vs_per_frame": round(float(duplication_factor), 2),
     "class_counts": class_counts,
+    "event_class_counts": event_class_counts,
     "counting_totals": counting_totals,
     "selected_thresholds": selected_thresholds,
     "counting_timeline": str(COUNTING_TIMELINE_PATH),
@@ -888,7 +988,7 @@ Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · video: {len(scan_jobs)} · fra
 | track mentah dari ByteTrack | {tracks_total} |
 | fragmen disambung | {fragments_stitched} |
 | kendaraan setelah penyambungan | {vehicles_total} |
-| kendaraan dihitung (>= {MIN_TRACK_HITS} kemunculan) | {len(counted_vehicle_frame)} |
+| bbox tidak standar (official test) | {len(official_bbox_frame)} |
 
 | Keluaran | Jumlah |
 |---|---|
@@ -902,9 +1002,10 @@ Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · video: {len(scan_jobs)} · fra
 
 Gambar: `{FIGURE_PATH}` · ringkasan: `{COUNTING_SUMMARY_PATH}` · track: `{TRACK_SUMMARY_PATH}` · fragmen: `{FRAGMENT_MERGES_PATH}`
 
-**Cara membaca angka ini:** satu baris = satu kendaraan yang dilacak ByteTrack di dalam ROI,
-bukan satu box per frame. Rasio duplikasi dibanding hitung per frame adalah
-**{duplication_factor:.1f}x**, itu gambaran seberapa besar overcount kalau tracking dilewati.
+**Cara membaca angka ini:** satu baris pada counting utama = satu bbox tidak standar pada satu frame.
+Kendaraan yang sama dapat muncul berkali-kali pada frame berbeda. ByteTrack tetap dipakai untuk
+menyediakan `track_id` dan audit temporal, tetapi bukan untuk mengagregasi angka utama menjadi
+kendaraan unik.
 
 **Penyambungan fragmen.** Track yang terputus karena kendaraan sempat hilang dari pandangan
 (lebih dari buffer tracker) disambung kembali bila jarak waktunya <= {FRAGMENT_MAX_GAP_FRAMES} frame
@@ -927,8 +1028,6 @@ import cv2
 from IPython.display import Markdown, display
 
 
-# Cell mandiri: hanya mengonversi overlay yang sudah ada agar bisa diputar browser.
-# Video sumber tidak dihapus dan tidak disentuh.
 RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
 OUTPUT_ROOT = RISET_ROOT / "output"
 SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"

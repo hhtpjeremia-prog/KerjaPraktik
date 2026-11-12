@@ -10,28 +10,27 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from pipeline_common import CLASS_NAMES, COUNT_CONTRACT, TRAINING_CLASS_NAMES, UNMEASURABLE_COUNT_CONTRACT_KEYS
+from pipeline_common import CLASS_NAMES, COUNT_CONTRACT, TRAINING_CLASS_NAMES
 
 APP_PATH = str(PROJECT_ROOT / "dashboard" / "app.py")
 
 
 def build_summary() -> dict:
     class_counts = {name: 0 for name in CLASS_NAMES}
-    class_counts["MobilNormal"] = 7
-    class_counts["MobilSilau"] = 3
-    class_counts["MotorNormal"] = 5
-    class_counts["MotorSilau"] = 2
+    class_counts["MobilStandar"] = 7
+    class_counts["MobilTidakStandar"] = 3
+    class_counts["MotorStandar"] = 5
+    class_counts["MotorTidakStandar"] = 2
     class_counts["PantulanCahaya"] = 1
-    counting_totals = {
-        key: "n/a" if key in UNMEASURABLE_COUNT_CONTRACT_KEYS
-        else sum(class_counts[name] for name in classes)
-        for key, classes in COUNT_CONTRACT.items()
-    }
+    event_class_counts = {name: 0 for name in CLASS_NAMES}
+    event_class_counts["MobilTidakStandar"] = 3
+    event_class_counts["MotorTidakStandar"] = 2
+    counting_totals = {key: sum(event_class_counts[name] for name in classes) for key, classes in COUNT_CONTRACT.items()}
     return {
         "smoke_mode": False,
         "counted_splits": ["test"],
         "min_track_hits": 3,
-        "vehicles_counted": 18,
+        "bbox_counted": 5,
         "videos_counted": 2,
         "videos_found": 2,
         "frames_processed": 1840,
@@ -43,6 +42,7 @@ def build_summary() -> dict:
         "fragments_stitched": 25,
         "duplication_factor_vs_per_frame": 221.1,
         "class_counts": class_counts,
+        "event_class_counts": event_class_counts,
         "counting_totals": counting_totals,
         "selected_thresholds": {name: 0.35 for name in TRAINING_CLASS_NAMES},
     }
@@ -54,13 +54,11 @@ def build_per_video_frame() -> pd.DataFrame:
         ("bogor-kab-bappenda2", "video_alpha", 0),
         ("bogor-kab-pdam2", "video_beta", 3),
     ):
-        row = {"video_stem": video_stem, "camera_id": camera_id, "vehicles_counted": 4 + offset}
+        row = {"video_stem": video_stem, "camera_id": camera_id, "bbox_counted": 4 + offset}
         for class_index, class_name in enumerate(CLASS_NAMES):
             row[class_name] = 1 if class_index % 3 == 0 else 0
         for key, classes in COUNT_CONTRACT.items():
-            row[key] = "n/a" if key in UNMEASURABLE_COUNT_CONTRACT_KEYS else sum(
-                row[name] for name in classes
-            )
+            row[key] = sum(row[name] for name in classes)
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -85,7 +83,7 @@ def main() -> None:
         os.environ["NB06_ROOT"] = str(temporary_root / "empty_nb06")
         empty_test = run_app()
         assert not empty_test.exception, [item.value for item in empty_test.exception]
-        assert len(empty_test.title) == 1, len(empty_test.title)
+        assert any("CCTV" in item.value for item in empty_test.title), [item.value for item in empty_test.title]
         assert len(empty_test.warning) >= 1, "state kosong tidak memunculkan peringatan"
         assert len(empty_test.metric) == 0, len(empty_test.metric)
         print(f"[check] empty  title={empty_test.title[0].value!r} warnings={len(empty_test.warning)}")
@@ -95,17 +93,23 @@ def main() -> None:
         os.environ["NB06_ROOT"] = str(ready_root)
         ready_test = run_app()
         assert not ready_test.exception, [item.value for item in ready_test.exception]
-        assert len(ready_test.metric) == 4, len(ready_test.metric)
         assert len(ready_test.warning) == 0, [item.value for item in ready_test.warning]
-        assert len(ready_test.dataframe) == 5, len(ready_test.dataframe)
-        chart_elements = ready_test.get("vega_lite_chart")
-        assert len(chart_elements) == 1, len(chart_elements)
+        metric_labels = {item.label for item in ready_test.metric}
+        assert {"BBox tidak standar", "BBox mobil", "BBox motor"}.issubset(metric_labels), metric_labels
         metric_values = [item.value for item in ready_test.metric]
-        camera_frame = ready_test.dataframe[0].value
+        camera_frames = [item.value for item in ready_test.dataframe if {"Titik CCTV", "Status"}.issubset(item.value.columns)]
+        assert camera_frames, "tabel status titik CCTV tidak dirender"
+        camera_frame = camera_frames[0]
         print(f"[check] ready  metrics={metric_values}")
         print(f"[check] ready  cameras={camera_frame['Titik CCTV'].tolist()}")
         print(f"[check] ready  status={camera_frame['Status'].tolist()}")
-        print(f"[check] ready  kendaraan={camera_frame['Kendaraan'].tolist()}")
+        measured_columns = [
+            column
+            for column in ("BBox tidak standar", "BBox mobil tidak standar", "BBox motor tidak standar")
+            if column in camera_frame.columns
+        ]
+        assert measured_columns, camera_frame.columns.tolist()
+        print(f"[check] ready  measured={camera_frame[measured_columns].to_dict('records')}")
 
         partial_root = temporary_root / "partial_nb06"
         partial_root.mkdir(parents=True, exist_ok=True)

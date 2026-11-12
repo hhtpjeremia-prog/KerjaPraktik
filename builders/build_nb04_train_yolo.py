@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build NB04_train_yolo.ipynb: materialisasi split resmi dari gold set dan training YOLO 9 kelas."""
+"""Build NB04_train_yolo.ipynb: materialisasi split dan training detector YOLO Mobil/Motor."""
 
 import sys
 from pathlib import Path
@@ -17,7 +17,7 @@ OUTPUT_NOTEBOOK = PROJECT_ROOT / "NB04_train_yolo.ipynb"
 EXPECTED_CODE_CELL_COUNT = 7
 EXPECTED_MARKDOWN_CELL_COUNT = 1
 
-NAVBAR_MARKDOWN = """# NB04 — Materialisasi Split & Training YOLO 9 Kelas
+NAVBAR_MARKDOWN = """# NB04 — Materialisasi Split & Training YOLO Mobil/Motor
 
 NB02b sudah mengekspor gold set beserta `split_map.csv`. NB04 **tidak membuat label baru**: ia hanya
 menyusun ulang gambar+label ke struktur `{train,val,test}` sesuai peta split per kamera, menulis
@@ -31,10 +31,7 @@ menyusun ulang gambar+label ke struktur `{train,val,test}` sesuai peta split per
   split, sehingga tidak ada kebocoran lewat frame yang mirip dari video yang sama.
 - **Semua label adalah gold.** Tidak ada percampuran label pseudo: NB02 hanya memberi lokasi, dan
   lokasi itu sudah dikoreksi manusia di NB02b. Frame yang tidak direview tidak ikut dataset.
-- **9 kelas**, `nc: 9`. Indeks kelas mengikuti urutan `TRAINING_CLASS_NAMES` di NB02b — jangan diubah di sini,
-  karena file label sudah memakai indeks tersebut.
-- **`PantulanCahaya` = hard-negative.** Ikut dilatih supaya model tidak menghitung pantulan aspal
-  sebagai lampu, tetapi tidak pernah masuk angka kendaraan di NB05.
+- **3 kelas detector**: `Mobil`, `Motor`, dan `PantulanCahaya`. Pantulan dilatih sebagai target eksplisit supaya detector dapat mengenalinya; NB06 membuang kelas ini sebelum ByteTrack, overlay, dan counting kendaraan.
 - **Gambar di-hardlink** (fallback copy). Menghapus folder dataset tidak menghapus crop NB02.
 - **Guard**: training ditolak bila split `val` terlalu kecil, karena metrik dari val yang nyaris
   kosong hanya menyesatkan.
@@ -79,6 +76,7 @@ ANNOTATION_ROOT = DATA_ROOT / "annotation"
 SOURCE_IMAGE_DIR = ANNOTATION_ROOT / "yolo" / "images"
 SOURCE_LABEL_DIR = ANNOTATION_ROOT / "yolo" / "labels"
 SPLIT_MAP_PATH = ANNOTATION_ROOT / "yolo" / "split_map.csv"
+YOLO_EXPORT_MANIFEST_PATH = ANNOTATION_ROOT / "yolo" / "export_manifest.json"
 
 NB04_ROOT = DATA_ROOT / "nb04"
 DATASET_ROOT = NB04_ROOT / "dataset"
@@ -124,6 +122,11 @@ display(Markdown(
 SPLIT_SOURCE = '''def read_split_map(split_map_path: Path) -> pd.DataFrame:
     if not split_map_path.exists():
         raise FileNotFoundError(f"{split_map_path} tidak ada. Jalankan export NB02b lebih dulu.")
+    if not YOLO_EXPORT_MANIFEST_PATH.exists():
+        raise FileNotFoundError(f"Manifest integritas export hilang: {YOLO_EXPORT_MANIFEST_PATH}. Jalankan export NB02b.")
+    export_manifest = json.loads(YOLO_EXPORT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    if export_manifest.get("status") != "complete":
+        raise ValueError("Export YOLO NB02b belum berstatus complete; jalankan ulang export NB02b sebelum NB04.")
     split_frame = pd.read_csv(split_map_path, dtype=str)
     if tuple(split_frame.columns) != SPLIT_MAP_FIELDS:
         raise ValueError(f"kolom split_map.csv {tuple(split_frame.columns)} != {SPLIT_MAP_FIELDS}")
@@ -144,6 +147,13 @@ SPLIT_SOURCE = '''def read_split_map(split_map_path: Path) -> pd.DataFrame:
     missing_labels = [frame_stem for frame_stem in split_frame["frame_stem"] if not (SOURCE_LABEL_DIR / f"{frame_stem}.txt").exists()]
     if missing_labels:
         raise ValueError(f"label hilang untuk {len(missing_labels)} frame (contoh: {missing_labels[:5]})")
+    if int(export_manifest.get("gold_images", -1)) != len(split_frame) or int(export_manifest.get("gold_labels", -1)) != len(split_frame):
+        raise ValueError("Jumlah gambar/label pada manifest export tidak cocok dengan split_map.csv; export NB02b ulang.")
+    image_stems = {path.stem for path in SOURCE_IMAGE_DIR.glob("*.png")}
+    label_stems = {path.stem for path in SOURCE_LABEL_DIR.glob("*.txt")}
+    split_stems = set(split_frame["frame_stem"])
+    if image_stems != split_stems or label_stems != split_stems:
+        raise ValueError("Isi images/labels tidak sama dengan split_map.csv; NB04 menolak dataset parsial/stale.")
     return split_frame
 
 
@@ -225,12 +235,21 @@ SANITY_SOURCE = '''def count_split_boxes(split_name: str) -> dict:
     class_counts = {class_name: 0 for class_name in TRAINING_CLASS_NAMES}
     label_paths = sorted((DATASET_LABEL_DIR / split_name).glob("*.txt"))
     for label_path in label_paths:
-        for label_line in label_path.read_text(encoding="utf-8").splitlines():
+        for line_number, label_line in enumerate(label_path.read_text(encoding="utf-8").splitlines(), start=1):
             if not label_line.strip():
                 continue
-            class_index = int(label_line.split()[0])
+            fields = label_line.split()
+            if len(fields) != 5:
+                raise ValueError(f"format label YOLO harus 5 kolom: {label_path}:{line_number}")
+            class_index = int(fields[0])
             if class_index < 0 or class_index >= len(TRAINING_CLASS_NAMES):
                 raise ValueError(f"indeks kelas {class_index} di luar rentang pada {label_path.name}")
+            coordinates = [float(value) for value in fields[1:]]
+            if any(value < 0 or value > 1 for value in coordinates) or coordinates[2] <= 0 or coordinates[3] <= 0:
+                raise ValueError(
+                    f"koordinat label tidak valid pada {label_path}:{line_number}: {coordinates}. "
+                    "Perbaiki dimensi sumber/anotasi sebelum training."
+                )
             class_counts[TRAINING_CLASS_NAMES[class_index]] += 1
     return {"split": split_name, "images": len(label_paths), "boxes": sum(class_counts.values()), **class_counts}
 
@@ -406,7 +425,7 @@ Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · dataset: `{DATASET_ROOT}` · b
 - Semua label adalah gold hasil NB02b; tidak ada label pseudo yang ikut dilatih.
 - Split `test` tidak punya gold, jadi tidak ada metrik akurasi di sana.
   NB05 memakai kamera test hanya untuk **menghitung**, bukan mengukur akurasi.
-- Kelas `PantulanCahaya` adalah hard-negative dan tidak pernah dihitung sebagai kendaraan.
+- `PantulanCahaya` adalah target detector eksplisit, tetapi bukan kendaraan hitungan dan tidak diteruskan ke ByteTrack/overlay NB06.
 """
 ))'''
 

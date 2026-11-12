@@ -224,16 +224,24 @@ class VehicleFrameDataset(Dataset):
 
 
 def collate_grounding_dino(batch: list[dict]) -> dict:
-    encoded = processor(
+    # In transformers 5.x, the combined GroundingDinoProcessor ignores
+    # `annotations` as an unknown tokenizer argument. Route COCO targets through
+    # the image processor so boxes are resized/padded and returned as `labels`.
+    image_inputs = processor.image_processor(
         images=[item["image"] for item in batch],
-        text=[PROMPT] * len(batch),
         annotations=[item["target"] for item in batch],
         return_tensors="pt",
     )
     labels = [
         {key: value.to(DEVICE) if isinstance(value, torch.Tensor) else value for key, value in item.items()}
-        for item in encoded.pop("labels")
+        for item in image_inputs.pop("labels")
     ]
+    text_inputs = processor.tokenizer(
+        text=[PROMPT] * len(batch),
+        padding=True,
+        return_tensors="pt",
+    )
+    encoded = {**image_inputs, **text_inputs}
     return {"inputs": {key: value.to(DEVICE) for key, value in encoded.items()}, "labels": labels}
 
 

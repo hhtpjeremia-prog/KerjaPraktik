@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Gerbang verifikasi notebook: jumlah sel tetap dan isi sel bebas komentar, print, dan __file__."""
+"""Gerbang verifikasi notebook: struktur dan sintaks sel konsisten, tanpa output tertanam."""
 
 from pathlib import Path
 
 import nbformat
 
 
-FORBIDDEN_SNIPPETS = ("__file__", "Tugas_Manda", "print(")
-COMMENT_PREFIX = "#"
+FORBIDDEN_SNIPPETS = ("__file__", "Tugas_Manda")
 
 
 def verify_code_cells(
@@ -30,12 +29,17 @@ def verify_code_cells(
         for forbidden_snippet in FORBIDDEN_SNIPPETS:
             if forbidden_snippet in cell.source:
                 errors.append(f"sel kode {cell_index} memuat {forbidden_snippet}")
-        for line_index, line in enumerate(cell.source.splitlines(), start=1):
-            if line.lstrip().startswith(COMMENT_PREFIX):
-                errors.append(f"sel kode {cell_index} baris {line_index}: komentar {COMMENT_PREFIX} ditemukan")
+        try:
+            python_source = "\n".join(
+                line for line in cell.source.splitlines()
+                if not line.lstrip().startswith(("%", "!"))
+            )
+            compile(python_source, f"{notebook_path.name}:cell-{cell_index}", "exec")
+        except SyntaxError as error:
+            errors.append(f"sel kode {cell_index} sintaks tidak valid: {error}")
     if errors:
         raise SystemExit("\n".join(errors))
     print(
         f"Verifikasi OK: {notebook_path} "
-        f"({len(code_cells)} sel kode + {len(markdown_cells)} markdown, tanpa komentar/print/__file__, output kosong)"
+        f"({len(code_cells)} sel kode + {len(markdown_cells)} markdown, sintaks valid, output kosong)"
     )

@@ -730,6 +730,9 @@ nb02_summary = {
     "vehicle_score_threshold": VEHICLE_SCORE_THRESHOLD,
     "max_resize_side": MAX_RESIZE_SIDE,
     "config_signature": detection_summary["config_signature"],
+    "roi_config_signature": hashlib.sha256(
+        json.dumps(roi_config, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest(),
     "processed_frames": detection_summary["processed_frames"],
     "failed_detection_count": len(detection_summary["failed_frame_stems"]),
     "verifier_error_count": detection_summary["verifier_error_count"],

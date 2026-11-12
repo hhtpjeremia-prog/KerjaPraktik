@@ -38,9 +38,9 @@ yang bisa diukur?*
      (satuan OpenCV 0-180, bukan derajat)
    - `width_px`, `area_ratio` = ukuran box relatif frame
 
-   Statistik per kelas dipakai untuk **mendokumentasikan** pemisahan `Normal` / `Silau` /
-   `Berwarna`, bukan untuk menetapkan label. Label tetap milik manusia; angkanya jadi dasar
-   argumen di laporan bahwa definisi operasional bisa diukur.
+   Statistik per kelas anotasi dipakai untuk **audit kualitas dan karakterisasi visual**.
+   Target aktif hanya `Standar`/`TidakStandar` per jenis kendaraan; fitur fotometrik tidak
+   menjadi label pengganti dan tidak mengaktifkan kembali subkelas `Silau`/`Berwarna`.
 
 ## Kenapa tidak ada kalibrasi threshold DINO lagi
 
@@ -141,6 +141,7 @@ def collect_gold_box_rows(manifest_payload: dict, store_payload: dict) -> list[d
             box = [float(coordinate) for coordinate in box_entry["box"]]
             box_rows.append({
                 "frame_stem": frame_stem,
+                "image_path": frame_record.get("image_path", ""),
                 "box_index": box_index,
                 "camera_id": camera_id,
                 "split": split_name,
@@ -196,6 +197,10 @@ sample_manifest_payload = load_json_document(SAMPLE_MANIFEST_PATH)
 annotation_store_payload = load_json_document(ANNOTATION_STORE_PATH)
 gold_box_rows = collect_gold_box_rows(sample_manifest_payload, annotation_store_payload)
 reviewed_frame_total = assert_gold_set_is_usable(annotation_store_payload, gold_box_rows)
+gold_box_rows = [
+    box_row for box_row in gold_box_rows
+    if training_class_name(box_row["class_name"]) is not None
+]
 for box_row in gold_box_rows:
     box_row["class_name"] = training_class_name(box_row["class_name"])
 
@@ -310,14 +315,36 @@ PHOTOMETRY_SOURCE = '''def compute_box_photometry(hsv_image: np.ndarray, box_row
     }
 
 
+def resolve_crop_image_path(frame_stem: str, image_path_value: str, crop_directory: Path) -> Path:
+    candidates = []
+    if image_path_value:
+        recorded_path = Path(image_path_value)
+        candidates.append(recorded_path)
+        if not recorded_path.is_absolute():
+            candidates.append(RISET_ROOT / recorded_path)
+    candidates.append(crop_directory / f"{frame_stem}.png")
+    checked_paths = []
+    for candidate in candidates:
+        if candidate not in checked_paths:
+            checked_paths.append(candidate)
+            if candidate.is_file():
+                return candidate
+    raise FileNotFoundError(
+        f"crop tidak ditemukan untuk {frame_stem}; path manifest={image_path_value!r}; "
+        f"path yang dicek: {[str(path) for path in checked_paths]}"
+    )
+
+
 def annotate_photometry(gold_frame: pd.DataFrame, crop_directory: Path) -> pd.DataFrame:
     metric_rows = []
     metric_indices = []
     for frame_stem, frame_index in gold_frame.groupby("frame_stem", sort=True).groups.items():
-        image_path = crop_directory / f"{frame_stem}.png"
-        if not image_path.exists():
-            raise FileNotFoundError(f"crop tidak ditemukan untuk {frame_stem}: {image_path}")
-        hsv_image = cv2.cvtColor(cv2.imread(str(image_path)), cv2.COLOR_BGR2HSV)
+        recorded_image_path = str(gold_frame.loc[next(iter(frame_index)), "image_path"])
+        image_path = resolve_crop_image_path(frame_stem, recorded_image_path, crop_directory)
+        image = cv2.imread(str(image_path))
+        if image is None:
+            raise ValueError(f"crop ada tetapi tidak bisa dibaca untuk {frame_stem}: {image_path}")
+        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         for row_index in frame_index:
             metric_rows.append(compute_box_photometry(hsv_image, gold_frame.loc[row_index].to_dict()))
             metric_indices.append(row_index)
@@ -326,7 +353,6 @@ def annotate_photometry(gold_frame: pd.DataFrame, crop_directory: Path) -> pd.Da
 
 photometry_frame = annotate_photometry(gold_box_frame, CROP_DIR)
 gold_box_frame = pd.concat([gold_box_frame, photometry_frame], axis=1)
-gold_box_frame.to_csv(GOLD_BOXES_PATH, index=False)
 
 
 def build_photometry_summary(gold_frame: pd.DataFrame) -> pd.DataFrame:
@@ -409,9 +435,9 @@ display(Markdown(
     f"| Kelas kurang sampel | {', '.join(underrepresented_classes) if underrepresented_classes else 'tidak ada'} |\\n"
 ))
 display(Markdown(
-    "Angka di atas **tidak** menetapkan label. Label tetap hasil anotasi NB02b; tabel ini bukti bahwa "
-    "pemisahan `Normal`/`Silau`/`Berwarna` punya jejak terukur. Kalau dua kelas bertumpuk total, "
-    "definisi operasionalnya perlu dipertegas di dokumen riset."
+    "Angka di atas adalah audit fotometrik, bukan label atau skor klasifikasi. Target aktif "
+    "tetap Standar/TidakStandar untuk mobil dan motor. Fitur ini hanya membantu memeriksa "
+    "kualitas crop dan konsistensi visual; jangan menafsirkannya sebagai bukti performa model."
 ))'''
 
 

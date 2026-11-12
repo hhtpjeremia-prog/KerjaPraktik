@@ -115,19 +115,15 @@ def check_counting_contract(
     totals: dict,
     class_counts: dict,
     contract: dict,
-    mobil_key: str,
-    motor_key: str,
-    total_units: int,
+    total_boxes: int,
 ) -> None:
     for contract_key, contract_classes in contract.items():
-        if totals[contract_key] == "n/a":
-            continue
         expected_total = sum(class_counts[class_name] for class_name in contract_classes)
         if totals[contract_key] != expected_total:
             raise AssertionError(f"{contract_key}: {totals[contract_key]} != {expected_total}")
-    partitioned_units = totals[mobil_key] + totals[motor_key] + class_counts["PantulanCahaya"]
-    if partitioned_units != total_units:
-        raise AssertionError(f"partisi kelas ({partitioned_units}) != unit terhitung ({total_units})")
+    partitioned_boxes = sum(totals.values())
+    if partitioned_boxes != total_boxes:
+        raise AssertionError(f"jumlah kontrak bbox ({partitioned_boxes}) != bbox terhitung ({total_boxes})")
     print("[smoke] kontrak hitung konsisten", flush=True)
 
 
@@ -172,18 +168,14 @@ def main() -> None:
         counting_payload["box_totals"],
         counting_payload["class_counts"],
         BOX_COUNT_CONTRACT,
-        "jumlah_box_mobil",
-        "jumlah_box_motor",
         counting_payload["counted_boxes"],
     )
     tracking_payload = json.loads(assert_artifact("nb06/counting_summary.json").read_text(encoding="utf-8"))
     check_counting_contract(
         tracking_payload["counting_totals"],
-        tracking_payload["class_counts"],
+        tracking_payload["event_class_counts"],
         COUNT_CONTRACT,
-        "jumlah_kendaraan_mobil",
-        "jumlah_kendaraan_motor",
-        tracking_payload["vehicles_counted"],
+        tracking_payload["bbox_counted"],
     )
     if tracking_payload["frames_processed"] == 0:
         raise AssertionError("NB06 memproses 0 frame")
@@ -195,7 +187,7 @@ def main() -> None:
         print(f"[smoke] {contract_key}: {contract_value}", flush=True)
     print(f"[smoke] frame dihitung: {counting_payload['frames_counted']}", flush=True)
     print(f"[smoke] box lolos ambang: {counting_payload['counted_boxes']}", flush=True)
-    print("\n[smoke] === 8 angka kendaraan unik (NB06) ===", flush=True)
+    print("\n[smoke] === bbox event tidak standar (NB06) ===", flush=True)
     for contract_key, contract_value in tracking_payload["counting_totals"].items():
         print(f"[smoke] {contract_key}: {contract_value}", flush=True)
     print(
@@ -207,7 +199,7 @@ def main() -> None:
     print(
         f"[smoke] track mentah: {tracking_payload['tracks_total']} · "
         f"fragmen disambung: {tracking_payload['fragments_stitched']} · "
-        f"kendaraan dihitung: {tracking_payload['vehicles_counted']}",
+        f"bbox event: {tracking_payload['bbox_counted']}",
         flush=True,
     )
     print("[smoke] SELESAI TANPA ERROR", flush=True)

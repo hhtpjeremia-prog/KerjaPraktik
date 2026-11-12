@@ -12,7 +12,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from dashboard.data import (
-    MEASURABLE_CONTRACT_KEYS,
     NOT_AVAILABLE_LABEL,
     STATE_EMPTY,
     STATE_ERROR,
@@ -23,40 +22,21 @@ from dashboard.data import (
     load_counting_snapshot,
     resolve_nb06_root,
 )
-from pipeline_common import CLASS_NAMES, TRAINING_CLASS_NAMES, UNMEASURABLE_COUNT_CONTRACT_KEYS
+from pipeline_common import CLASS_NAMES
 
 PAGE_TITLE = "Hasil Hitung Kendaraan — CCTV Kab. Bogor"
 RATIO_DECIMAL_PLACES = 1
 
-CONTRACT_LABELS = {
-    "jumlah_kendaraan_mobil": "Kendaraan mobil",
-    "jumlah_kendaraan_motor": "Kendaraan motor",
-    "jumlah_lampu_silau_mobil": "Lampu silau — mobil",
-    "jumlah_lampu_silau_motor": "Lampu silau — motor",
-    "jumlah_lampu_berwarna_mobil": "Lampu berwarna — mobil",
-    "jumlah_lampu_berwarna_motor": "Lampu berwarna — motor",
-    "jumlah_lampu_silau_dan_berwarna_mobil": "Silau dan berwarna — mobil",
-    "jumlah_lampu_silau_dan_berwarna_motor": "Silau dan berwarna — motor",
-}
-
 CLASS_LABELS = {
-    "MobilNormal": "Mobil normal",
-    "MobilSilau": "Mobil silau",
-    "MobilBerwarna": "Mobil berwarna",
-    "MobilSilauBerwarna": "Mobil silau dan berwarna",
-    "MotorNormal": "Motor normal",
-    "MotorSilau": "Motor silau",
-    "MotorBerwarna": "Motor berwarna",
-    "MotorSilauBerwarna": "Motor silau dan berwarna",
+    "MobilStandar": "Mobil standar",
+    "MobilTidakStandar": "Mobil tidak standar",
+    "MotorStandar": "Motor standar",
+    "MotorTidakStandar": "Motor tidak standar",
     "PantulanCahaya": "Pantulan cahaya",
 }
 
 EVENT_COLORS = {
-    "Normal": "#F4F4F4",
-    "Silau": "#FF9F1C",
-    "Berwarna": "#00B8D9",
-    "SilauBerwarna": "#D946EF",
-    "PantulanCahaya": "#9CA3AF",
+    "TidakStandar": "#FF0000",
 }
 
 STYLE_BLOCK = """
@@ -102,14 +82,15 @@ def main() -> None:
 
 def render_header(summary: dict | None) -> None:
     st.title(PAGE_TITLE)
-    unit_note = "Satu baris = satu kendaraan unik di dalam ROI, bukan satu box per frame."
+    unit_note = "Counting utama = jumlah bbox tidak standar yang terlihat pada frame aktif; track ID hanya untuk audit."
     if summary is None:
         st.caption(unit_note)
         return
     counted_splits = ", ".join(summary.get("counted_splits", []))
     st.caption(
-        f"{unit_note} Split dihitung: {counted_splits} · "
-        f"minimal {format_count(summary.get('min_track_hits'))} kemunculan per kendaraan."
+        f"{unit_note} Split dihitung: {counted_splits}. "
+        f"Filter minimal {format_count(summary.get('min_track_hits'))} kemunculan hanya berlaku "
+        "untuk audit kendaraan unik dan galeri event; bukan hitungan bbox per frame."
     )
 
 
@@ -143,16 +124,16 @@ def render_totals(summary: dict) -> None:
     counting_totals = summary["counting_totals"]
     total_columns = st.columns(4)
     total_columns[0].metric(
-        "Kendaraan dihitung", format_count(summary.get("vehicles_counted")), border=True
+        "BBox tidak standar", format_count(summary.get("bbox_counted")), border=True
     )
     total_columns[1].metric(
-        "Mobil", format_count(counting_totals.get("jumlah_kendaraan_mobil")), border=True
+        "BBox mobil", format_count(counting_totals.get("jumlah_bbox_mobil_tidak_standar")), border=True
     )
     total_columns[2].metric(
-        "Motor", format_count(counting_totals.get("jumlah_kendaraan_motor")), border=True
+        "BBox motor", format_count(counting_totals.get("jumlah_bbox_motor_tidak_standar")), border=True
     )
     total_columns[3].metric(
-        "Video dihitung", format_count(summary.get("videos_counted")), border=True
+        "Video diproses", format_count(summary.get("videos_counted")), border=True
     )
 
 
@@ -204,7 +185,8 @@ def render_playback(snapshot: CountingSnapshot) -> None:
     )
     fps = float(video_row["fps"])
     st.caption(f"Posisi: {selected_frame / fps:.1f} detik dari {float(video_row['duration_seconds']):.1f} detik")
-    visible_timeline = video_timeline[video_timeline["first_frame"] <= selected_frame]
+    timeline_frame_column = "counting_frame" if "counting_frame" in video_timeline.columns else "frame_index"
+    visible_timeline = video_timeline[video_timeline[timeline_frame_column] == selected_frame]
     video_column, count_column = st.columns([1.55, 1], gap="large")
     with video_column:
         st.markdown("#### Video overlay")
@@ -217,13 +199,11 @@ def render_playback(snapshot: CountingSnapshot) -> None:
         count_columns = st.columns(2)
         count_columns[0].metric("Kendaraan", format_count(len(visible_timeline)))
         count_columns[1].metric(
-            "Mobil", format_count(int(visible_timeline["class_name"].str.startswith("Mobil").sum()))
+            "BBox mobil", format_count(int(visible_timeline["class_name"].str.startswith("Mobil").sum()))
         )
     event_groups = {
-        "Normal": {"MobilNormal", "MotorNormal"},
-        "Silau": {"MobilSilau", "MotorSilau"},
-        "Berwarna": {"MobilBerwarna", "MotorBerwarna"},
-        "Silau + berwarna": {"MobilSilauBerwarna", "MotorSilauBerwarna"},
+        "Tidak standar mobil": {"MobilTidakStandar"},
+        "Tidak standar motor": {"MotorTidakStandar"},
     }
     with count_column:
         count_columns = st.columns(2)
@@ -232,35 +212,32 @@ def render_playback(snapshot: CountingSnapshot) -> None:
             column.metric(label, format_count(value))
         st.markdown("**Arti warna bbox dan tipe kendaraan**")
         render_class_legend()
-    class_counts = visible_timeline["class_name"].value_counts().reindex(CLASS_NAMES, fill_value=0)
-    st.bar_chart(pd.DataFrame({"Jumlah": class_counts}, index=[CLASS_LABELS[name] for name in CLASS_NAMES]), height=240)
+    class_counts = pd.Series(
+        {
+            "Mobil tidak standar": int(visible_timeline["class_name"].isin({"MobilTidakStandar"}).sum()),
+            "Motor tidak standar": int(visible_timeline["class_name"].isin({"MotorTidakStandar"}).sum()),
+        }
+    )
+    st.bar_chart(pd.DataFrame({"Jumlah bbox aktif": class_counts}), height=220)
     if not visible_timeline.empty:
         st.dataframe(
-            visible_timeline.sort_values("first_frame")[["vehicle_id", "class_name", "first_frame", "hits", "mean_score"]],
+            visible_timeline.sort_values(timeline_frame_column)[
+                [column for column in ("bbox_id", "track_id", "class_name", timeline_frame_column, "score") if column in visible_timeline.columns]
+            ],
             hide_index=True,
             width="stretch",
         )
 
 
 def render_class_legend() -> None:
-    legend_rows = []
-    for class_name in CLASS_NAMES:
-        if class_name == "PantulanCahaya":
-            suffix = "PantulanCahaya"
-        elif "SilauBerwarna" in class_name:
-            suffix = "SilauBerwarna"
-        elif "Silau" in class_name:
-            suffix = "Silau"
-        elif "Berwarna" in class_name:
-            suffix = "Berwarna"
-        else:
-            suffix = "Normal"
-        vehicle = "Mobil" if class_name.startswith("Mobil") else "Motor" if class_name.startswith("Motor") else "—"
-        legend_rows.append(
-            f'<div style="display:flex;align-items:center;gap:.45rem;margin:.2rem 0;">'
-            f'<span style="width:12px;height:12px;border-radius:3px;background:{EVENT_COLORS[suffix]};display:inline-block;border:1px solid #777;"></span>'
-            f'<span>{CLASS_LABELS[class_name]} <small>({vehicle})</small></span></div>'
-        )
+    legend_rows = [
+        f'<div style="display:flex;align-items:center;gap:.45rem;margin:.2rem 0;">'
+        f'<span style="width:12px;height:12px;background:{EVENT_COLORS["TidakStandar"]};display:inline-block;"></span>'
+        '<span>Merah = lampu tidak standar (mobil atau motor)</span></div>',
+        '<div style="display:flex;align-items:center;gap:.45rem;margin:.2rem 0;">'
+        '<span style="width:12px;height:12px;background:transparent;display:inline-block;outline:1px solid currentColor;"></span>'
+        '<span>Tanpa bbox = standar / tidak ditampilkan</span></div>',
+    ]
     st.markdown("".join(legend_rows), unsafe_allow_html=True)
 
 
@@ -268,6 +245,8 @@ def render_model_validation(snapshot: CountingSnapshot) -> None:
     st.subheader("Performa model dan batas interpretasi")
     nb06_root = resolve_nb06_root()
     nb04_root = nb06_root.parent / "nb04"
+    nb05_root = nb06_root.parent / "nb05"
+    ground_truth_root = nb06_root.parent / "ground_truth"
     results_paths = list((nb04_root / "runs").glob("*/results.csv")) if (nb04_root / "runs").exists() else []
     metrics_path = nb04_root / "val_metrics.json"
     if not results_paths and not metrics_path.exists():
@@ -281,7 +260,7 @@ def render_model_validation(snapshot: CountingSnapshot) -> None:
                 "metrics/precision(B)", "metrics/recall(B)", "metrics/mAP50(B)", "metrics/mAP50-95(B)",
             ) if column in results_frame.columns
         ]
-        if preferred_columns:
+        if "epoch" in results_frame.columns and len(preferred_columns) > 1:
             st.caption("Kurva train dan validation per epoch. Ini bukan kurva akurasi test.")
             st.line_chart(results_frame[preferred_columns].set_index("epoch"), height=300)
     if metrics_path.exists():
@@ -292,10 +271,112 @@ def render_model_validation(snapshot: CountingSnapshot) -> None:
         )
         if not metric_frame.empty:
             st.dataframe(metric_frame, hide_index=True, width="stretch")
-    st.info(
-        "Kamera test dipakai untuk inferensi dan counting, tetapi belum memiliki ground truth manual. "
-        "Karena itu dashboard tidak menyebut hasil test sebagai akurasi model."
-    )
+
+    # NB02c holdout GT lives separately from the NB06 inference/counting artifacts.
+    # Read its review/export summary and the NB05 final detector evaluation explicitly.
+    gt_summary_path = ground_truth_root / "annotation_summary.json"
+    detector_test_path = nb05_root / "test_metrics.json"
+    gt_summary = None
+    if gt_summary_path.exists():
+        try:
+            gt_summary = json.loads(gt_summary_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            st.warning(f"Ringkasan GT NB02c tidak bisa dibaca: {error}")
+    detector_test = None
+    if detector_test_path.exists():
+        try:
+            detector_test = json.loads(detector_test_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            st.warning(f"Metrik test detector NB05 tidak bisa dibaca: {error}")
+
+    st.markdown("#### Evaluasi holdout test dengan ground truth NB02c")
+    if gt_summary:
+        reviewed_frames = int(gt_summary.get("reviewed_frames", 0))
+        vehicle_boxes = int(gt_summary.get("gold_boxes", 0))
+        reflection_boxes = int(
+            gt_summary.get(
+                "detector_gt_reflection_target_boxes",
+                gt_summary.get("gold_boxes_by_class", {}).get("PantulanCahaya", 0),
+            )
+        )
+        st.caption(
+            f"GT direview: {reviewed_frames:,} frame · {vehicle_boxes:,} bbox target detector "
+            f"(termasuk {reflection_boxes:,} PantulanCahaya). Pantulan ikut evaluasi kelas, "
+            "lalu disaring sebelum ByteTrack, overlay, dan counting kendaraan."
+        )
+    else:
+        st.info("Ringkasan GT NB02c belum ditemukan. Periksa `output/ground_truth/annotation_summary.json`.")
+
+    if detector_test and detector_test.get("status") == "computed":
+        detector_overall = detector_test.get("overall", {})
+        st.markdown(
+            f"**YOLO test** · {int(detector_test.get('frames', 0)):,} frame berlabel "
+            f"· sumber: {detector_test.get('label_source', 'ground truth')}"
+        )
+        detector_metric_names = {
+            "precision": "Precision",
+            "recall": "Recall",
+            "mAP50": "mAP@50",
+            "mAP50-95": "mAP@50:95",
+            "bbox_coordinate_mse_normalized": "Koordinat bbox MSE (normalisasi)",
+            "bbox_coordinate_rmse_normalized": "Koordinat bbox RMSE (normalisasi)",
+            "bbox_size_mae_normalized": "Ukuran bbox MAE (normalisasi)",
+            "bbox_iou_error_mean": "Rata-rata error IoU (1 − IoU)",
+            "bbox_matched_count": "Pasangan prediksi–GT",
+        }
+        detector_rows = [
+            {"Metrik test YOLO": label, "Nilai": detector_overall[key]}
+            for key, label in detector_metric_names.items()
+            if key in detector_overall
+        ]
+        if detector_rows:
+            st.dataframe(pd.DataFrame(detector_rows), hide_index=True, width="stretch")
+    elif gt_summary:
+        st.info(
+            "GT sudah tersedia, tetapi artefak evaluasi test YOLO belum ada atau belum berstatus "
+            "computed. Jalankan tahap evaluasi test NB05, lalu muat ulang dashboard."
+        )
+    else:
+        st.info("Metrik test YOLO belum dapat ditampilkan karena ringkasan GT belum tersedia.")
+
+    attribute_root = nb06_root.parent / "attribute_classifier"
+    attribute_history_path = attribute_root / "training_history.csv"
+    attribute_metrics_path = attribute_root / "metrics.json"
+    if attribute_history_path.exists():
+        st.markdown("#### CNN kondisi lampu")
+        attribute_history = pd.read_csv(attribute_history_path)
+        history_columns = [
+            column for column in (
+                "epoch", "train_loss", "val_loss", "train_f1", "val_f1",
+                "train_accuracy", "val_accuracy",
+            ) if column in attribute_history.columns
+        ]
+        if "epoch" in attribute_history.columns and len(history_columns) > 1:
+            st.line_chart(attribute_history[history_columns].set_index("epoch"), height=280)
+        if attribute_metrics_path.exists():
+            attribute_metrics = json.loads(attribute_metrics_path.read_text(encoding="utf-8"))
+            test_metrics = attribute_metrics.get("test_metrics")
+            if test_metrics is None:
+                if gt_summary:
+                    st.info(
+                        "GT holdout tersedia, tetapi metrik test CNN belum tercatat. "
+                        "Periksa atau jalankan ulang evaluasi test NB04b."
+                    )
+                else:
+                    st.info("Metrik test CNN belum tersedia karena GT holdout belum ditemukan.")
+            else:
+                st.markdown("**CNN kondisi lampu — test holdout**")
+                st.dataframe(
+                    pd.DataFrame([test_metrics]),
+                    hide_index=True,
+                    width="stretch",
+                )
+    if gt_summary and detector_test and detector_test.get("status") == "computed":
+        st.caption(
+            "Metrik di atas membandingkan prediksi model dengan label holdout yang direview. "
+            "Counting NB06 tetap merupakan keluaran inferensi pada video; metrik ini tidak "
+            "mengubah atau menggantikan angka counting."
+        )
 
 
 def render_event_footage(snapshot: CountingSnapshot) -> None:
@@ -308,13 +389,17 @@ def render_event_footage(snapshot: CountingSnapshot) -> None:
         )
         return
     clips = pd.DataFrame(snapshot.event_clip_manifest)
-    class_filter = st.selectbox("Kelas event", ["Semua kelas", *CLASS_NAMES], key="clip_class")
+    nonstandard_classes = {"MobilTidakStandar", "MotorTidakStandar"}
+    clips = clips[clips["class_name"].isin(nonstandard_classes)].copy()
+    class_filter = st.selectbox("Kelas event", ["Semua tidak standar", "Mobil tidak standar", "Motor tidak standar"], key="clip_class")
     camera_filter = st.selectbox(
         "Titik CCTV", ["Semua titik", *sorted(clips["camera_id"].unique().tolist())], key="clip_camera"
     )
     filtered = clips.copy()
-    if class_filter != "Semua kelas":
-        filtered = filtered[filtered["class_name"] == class_filter]
+    if class_filter == "Mobil tidak standar":
+        filtered = filtered[filtered["class_name"].str.startswith("Mobil")]
+    elif class_filter == "Motor tidak standar":
+        filtered = filtered[filtered["class_name"].str.startswith("Motor")]
     if camera_filter != "Semua titik":
         filtered = filtered[filtered["camera_id"] == camera_filter]
     if filtered.empty:
@@ -323,24 +408,6 @@ def render_event_footage(snapshot: CountingSnapshot) -> None:
     filtered = filtered.reset_index(drop=True)
     st.caption(f"{len(filtered)} event cocok dengan filter.")
     render_event_gallery(filtered)
-    return
-    selected_index = st.selectbox(
-        "Pilih vehicle ID untuk membuka footage",
-        filtered.index.tolist(),
-        format_func=lambda index: (
-            f"{CLASS_LABELS[filtered.loc[index, 'class_name']]} · "
-            f"{filtered.loc[index, 'camera_id']} · vehicle {filtered.loc[index, 'vehicle_id']}"
-        ),
-        key="clip_selection",
-    )
-    selected_clip = filtered.loc[selected_index]
-    clip_path = Path(selected_clip["clip_path"])
-    if not clip_path.is_absolute():
-        clip_path = PROJECT_ROOT / clip_path
-    if clip_path.exists():
-        st.video(str(clip_path))
-    else:
-        st.warning(f"File clip belum ditemukan: `{clip_path}`")
 
 
 def render_event_gallery(filtered: pd.DataFrame) -> None:
@@ -406,6 +473,7 @@ def render_camera_section(snapshot: CountingSnapshot) -> None:
         return
     with st.expander("Rincian per kelas untuk tiap titik CCTV"):
         st.dataframe(class_display_frame(snapshot.camera_table), hide_index=True, width="stretch")
+        st.caption("Rincian kelas adalah bbox deteksi per frame setelah ambang confidence; hitungan event utama hanya mengambil kelas tidak standar.")
 
 
 def camera_display_frame(status_frame: pd.DataFrame) -> pd.DataFrame:
@@ -415,11 +483,9 @@ def camera_display_frame(status_frame: pd.DataFrame) -> pd.DataFrame:
             "Split": status_frame["split"],
             "Status": status_frame["status"],
             "Video": formatted_column(status_frame, "videos_counted"),
-            "Kendaraan": formatted_column(status_frame, "vehicles_counted"),
-            "Mobil": formatted_column(status_frame, "jumlah_kendaraan_mobil"),
-            "Motor": formatted_column(status_frame, "jumlah_kendaraan_motor"),
-            "Silau mobil": formatted_column(status_frame, "jumlah_lampu_silau_mobil"),
-            "Silau motor": formatted_column(status_frame, "jumlah_lampu_silau_motor"),
+            "BBox tidak standar": formatted_column(status_frame, "bbox_counted"),
+            "BBox mobil tidak standar": formatted_column(status_frame, "jumlah_bbox_mobil_tidak_standar"),
+            "BBox motor tidak standar": formatted_column(status_frame, "jumlah_bbox_motor_tidak_standar"),
         }
     )
 
@@ -446,51 +512,31 @@ def ratio_label(value: float | None) -> str:
 
 def render_contract_section(summary: dict) -> None:
     counting_totals = summary["counting_totals"]
-    st.subheader("Delapan angka kontrak")
-    measured_column, unmeasured_column = st.columns(2)
-    with measured_column:
-        st.caption("Terukur dari model")
-        st.dataframe(
-            contract_display_frame(counting_totals, MEASURABLE_CONTRACT_KEYS),
-            hide_index=True,
-            width="stretch",
-        )
-    if UNMEASURABLE_COUNT_CONTRACT_KEYS:
-        with unmeasured_column:
-            pass
-        st.caption("Belum terukur — menunggu classifier atribut")
-        st.dataframe(
-            contract_display_frame(counting_totals, list(UNMEASURABLE_COUNT_CONTRACT_KEYS)),
-            hide_index=True,
-            width="stretch",
-        )
-
-
-def contract_display_frame(counting_totals: dict, contract_keys: list[str]) -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "Keluaran": [CONTRACT_LABELS[contract_key] for contract_key in contract_keys],
+    st.subheader("Counting bbox tidak standar")
+    st.caption("Satuan angka ini adalah bbox per frame, bukan kendaraan unik sepanjang video.")
+    st.dataframe(
+        pd.DataFrame({
+            "Keluaran": ["BBox mobil tidak standar", "BBox motor tidak standar"],
             "Jumlah": [
-                format_count(counting_totals.get(contract_key, NOT_AVAILABLE_LABEL))
-                for contract_key in contract_keys
+                format_count(counting_totals.get("jumlah_bbox_mobil_tidak_standar", 0)),
+                format_count(counting_totals.get("jumlah_bbox_motor_tidak_standar", 0)),
             ],
-        }
+        }),
+        hide_index=True,
+        width="stretch",
     )
-
-
 def render_class_section(summary: dict) -> None:
-    st.subheader("Kendaraan per kelas")
-    class_counts = summary.get("class_counts", {})
+    st.subheader("BBox aktif per tipe kendaraan")
+    class_counts = summary.get("event_class_counts", {})
     class_frame = pd.DataFrame(
-        {"Jumlah": [int(class_counts.get(class_name, 0)) for class_name in CLASS_NAMES]},
-        index=[CLASS_LABELS[class_name] for class_name in CLASS_NAMES],
+        {"Jumlah bbox": [
+            sum(int(class_counts.get(class_name, 0)) for class_name in ("MobilTidakStandar",)),
+            sum(int(class_counts.get(class_name, 0)) for class_name in ("MotorTidakStandar",)),
+        ]},
+        index=["Mobil tidak standar", "Motor tidak standar"],
     )
     st.bar_chart(class_frame, height=280)
-    st.caption(
-        "Lima kelas detector YOLO diperkaya oleh dua atribut NB04b. Karena itu dashboard "
-        "menampilkan sembilan event akhir: mobil/motor normal, silau, berwarna, silau+berwarna, "
-        "serta pantulan cahaya."
-    )
+    st.caption("Kendaraan standar dan pantulan tidak masuk counting utama.")
 
 
 def render_quality_section(summary: dict) -> None:

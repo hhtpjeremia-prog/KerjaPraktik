@@ -14,10 +14,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from pipeline_common import (
+    CLASS_NAMES,
     COUNT_CONTRACT,
     SPLIT_NAME_BY_CAMERA,
     TRAINING_CLASS_NAMES,
-    UNMEASURABLE_COUNT_CONTRACT_KEYS,
 )
 
 DEFAULT_NB06_ROOT = PROJECT_ROOT / "output" / "nb06"
@@ -33,7 +33,7 @@ CAMERA_ID_COLUMN = "camera_id"
 VIDEO_STEM_COLUMN = "video_stem"
 SPLIT_COLUMN = "split"
 STATUS_COLUMN = "status"
-VEHICLES_COUNTED_COLUMN = "vehicles_counted"
+BBOX_COUNTED_COLUMN = "bbox_counted"
 VIDEOS_COUNTED_COLUMN = "videos_counted"
 
 STATE_READY = "ready"
@@ -51,9 +51,7 @@ THOUSAND_SUFFIXES = ((1_000_000.0, "M"), (1_000.0, "k"))
 SUFFIX_DECIMAL_PLACES = 1
 
 MEASURABLE_CONTRACT_KEYS = [
-    contract_key
-    for contract_key in COUNT_CONTRACT
-    if contract_key not in UNMEASURABLE_COUNT_CONTRACT_KEYS
+    contract_key for contract_key in COUNT_CONTRACT
 ]
 
 
@@ -97,7 +95,7 @@ def build_camera_table(per_video_frame: pd.DataFrame) -> pd.DataFrame:
     )
     measured_columns = [
         column_name
-        for column_name in (VEHICLES_COUNTED_COLUMN, *TRAINING_CLASS_NAMES, *MEASURABLE_CONTRACT_KEYS)
+        for column_name in (BBOX_COUNTED_COLUMN, *CLASS_NAMES, *TRAINING_CLASS_NAMES, *MEASURABLE_CONTRACT_KEYS)
         if column_name in per_video_frame.columns
     ]
     if not measured_columns:
@@ -177,12 +175,27 @@ def load_counting_snapshot(nb06_root: Path | None = None) -> CountingSnapshot:
         summary_payload = json.loads(
             (nb06_root / COUNTING_SUMMARY_FILENAME).read_text(encoding="utf-8")
         )
-        per_video_frame = pd.read_csv(nb06_root / COUNTING_BY_VIDEO_FILENAME)
+        try:
+            per_video_frame = pd.read_csv(nb06_root / COUNTING_BY_VIDEO_FILENAME)
+        except pd.errors.EmptyDataError:
+            per_video_frame = pd.DataFrame(
+                columns=[VIDEO_STEM_COLUMN, CAMERA_ID_COLUMN, BBOX_COUNTED_COLUMN, *CLASS_NAMES, *MEASURABLE_CONTRACT_KEYS]
+            )
     except (OSError, ValueError) as artifact_error:
         return CountingSnapshot(
             state=STATE_ERROR,
             missing_artifacts=missing_artifacts,
             error_message=str(artifact_error),
+        )
+    if set(summary_payload.get("class_counts", {})) != set(CLASS_NAMES):
+        return CountingSnapshot(
+            state=STATE_ERROR,
+            error_message="Artefak NB06 memakai taksonomi lama/tidak lengkap; jalankan ulang NB06.",
+        )
+    if set(summary_payload.get("counting_totals", {})) != set(COUNT_CONTRACT):
+        return CountingSnapshot(
+            state=STATE_ERROR,
+            error_message="Kontrak hitung NB06 tidak cocok dengan versi pipeline; jalankan ulang NB06.",
         )
     timeline_frame = None
     timeline_path = nb06_root / COUNTING_TIMELINE_FILENAME

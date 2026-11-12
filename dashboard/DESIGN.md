@@ -16,7 +16,7 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
 | Format numbers like a product | **Dipakai** — `format_count()` di `dashboard/data.py` |
 | Spacing rhythm (base 8) | **Dipakai** — jarak antar blok selalu `st.divider()` atau grid `st.columns`, tidak ada padding manual |
 | Shadows for elevation logic | **Dibuang** — Streamlit `border=True` sudah jadi satu-satunya elevasi |
-| Semantic colors, light + dark | **Dipakai sebagian** — tema UI berasal dari `.streamlit/config.toml`; warna event bbox adalah pengecualian semantik yang dipetakan eksplisit agar warna Normal/Silau/Berwarna/SilauBerwarna tetap konsisten dengan overlay |
+| Semantic colors, light + dark | **Dipakai sebagian** — tema UI berasal dari `.streamlit/config.toml`; merah event bbox adalah warna semantik yang dipetakan eksplisit dan harus identik dengan overlay TidakStandar |
 | Native controls, SF Symbols, haptics, motion, navigation, simulator loop | **Dibuang** — tidak ada padanannya di Streamlit. Jangan dipaksakan. |
 
 ## Token terkunci
@@ -39,8 +39,8 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
 4. **Tanpa warna dekoratif hardcoded di `app.py`.** Warna event semantik boleh dipetakan eksplisit di
    legend karena harus identik dengan warna bbox NB06; warna dekoratif UI tetap berasal dari
    `.streamlit/config.toml`.
-5. **Satu label per maksud.** "Kendaraan dihitung" dipakai konsisten; jangan berganti menjadi
-   "total unit", "jumlah mobil+motor", atau "kendaraan masuk" untuk hal yang sama.
+5. **Satuan harus eksplisit.** Label hitung resmi adalah "bbox TidakStandar per frame"; jangan
+   menyebutnya jumlah kendaraan unik. Hitungan kelas pada timeline mengikuti bbox di frame terpilih.
 6. **Angka tidak boleh berbohong.** Nilai `"n/a"` tetap `n/a`, tidak pernah diubah menjadi `0`.
    Angka nol hanya ditampilkan bila memang nol.
 7. **Tanpa animasi dekoratif.** Tidak ada `st.spinner` untuk operasi yang sudah selesai,
@@ -49,15 +49,28 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
 ## Siklus state wajib
 
 Playback adalah lapisan presentasi di atas artefak NB06, bukan sumber angka baru. Video dipilih
-dari `overlay_manifest.json`; jumlah kumulatif dihitung dari `counting_timeline.csv` berdasarkan
-`first_frame` tiap `vehicle_id`, sehingga satu kendaraan tidak dihitung berulang karena muncul di
-banyak frame. Slider posisi disediakan sebagai mode audit yang deterministik.
+dari `overlay_manifest.json`; counting aktif membaca `counting_timeline.csv` dan hanya menampilkan
+baris dengan `counting_frame` sama dengan frame yang sedang dipilih. Satu kendaraan boleh muncul
+berulang karena satuan utama memang bbox per frame. `track_id` tetap ditampilkan untuk audit.
 
 Playback dan counting ditampilkan side-by-side. Legend warna bbox bersifat permanen dan menjelaskan
-keluarga kendaraan (mobil/motor) serta event cahaya. Galeri event memakai crop bbox dari
+keluarga kendaraan (mobil/motor) serta status tidak standar. Galeri event memakai crop bbox dari
 `event_crops/`, dengan filter kelas/CCTV, detail event, navigasi sequential, dan grid 8×8. Video
 full-frame pada `event_clips/` tetap boleh disimpan sebagai konteks audit, tetapi bukan tampilan
 utama galeri untuk end user.
+
+Model YOLO/FM memiliki kelas detector `Mobil`, `Motor`, `PantulanCahaya`; CNN memiliki label
+`Standar`, `TidakStandar`, `PantulanCahaya`. Pantulan ikut dilatih dan dievaluasi, tetapi disaring
+sebelum ByteTrack serta tidak masuk overlay, galeri event, atau hitungan kendaraan. Overlay end user
+tetap hanya menggambar bbox `TidakStandar` merah.
+
+Bagian performa model membaca sumber evaluasi secara terpisah dari hitungan NB06:
+`output/ground_truth/annotation_summary.json` untuk cakupan review GT NB02c,
+`output/nb05/test_metrics.json` untuk evaluasi holdout YOLO, dan
+`output/attribute_classifier/metrics.json` untuk evaluasi holdout CNN. Pesan bahwa kamera test
+belum memiliki GT hanya boleh ditampilkan jika artefak GT memang tidak tersedia. Kurva epoch
+hanya menampilkan train dan validation; metrik test final ditampilkan terpisah setelah checkpoint
+terbaik dipilih. Evaluasi GT tidak mengubah angka counting/inferensi NB06.
 
 Halaman tidak boleh hanya menangani jalur bahagia. Empat state ini harus ada dan terlihat beda:
 

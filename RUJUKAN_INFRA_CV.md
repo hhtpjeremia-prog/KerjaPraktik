@@ -243,5 +243,4 @@ Untuk setiap aset, catat secara terpisah: sitasi paper/model, lisensi kode, lise
 5. COCO evaluator — makna mAP@50 dan mAP@50:95.
 6. Paper CCTV malam dari Expert Systems with Applications — kedekatan domain.
 7. CIE Technical Note — batas klaim fitur piksel dibanding pengukuran fotometri.
-8. Soft Teacher dan Unbiased Teacher — hanya jika semi-supervised training akan benar-benar diuji.
-
+8. Soft Teacher dan Unbiased Teacher — hanya jika semi-supervised training akan benar-benar diuji.\n

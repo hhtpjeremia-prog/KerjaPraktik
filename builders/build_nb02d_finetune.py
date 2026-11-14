@@ -393,24 +393,49 @@ def allocate_camera_quota(camera_counts: dict[str, int], total: int) -> dict[str
     return quotas
 
 
-def choose_spaced(records: list[dict], already_selected: list[int], count: int, seed: int) -> list[dict]:
-    ordered = records.copy()
-    random.Random(seed).shuffle(ordered)
+def build_spaced_pool(records: list[dict], already_selected: list[int]) -> list[dict]:
+    """Build a maximum-size set of candidates honoring the minimum frame gap."""
+    ordered = sorted(
+        records,
+        key=lambda record: (
+            record["video_stem"],
+            int(Path(record["frame_path"]).stem.split("_")[-1]),
+        ),
+    )
     selected = []
     blocked = list(already_selected)
+    last_video = None
+    last_selected_number = None
     for record in ordered:
+        video_stem = record["video_stem"]
         number = int(Path(record["frame_path"]).stem.split("_")[-1])
-        if all(abs(number - prior) >= MIN_FRAME_GAP for prior in blocked):
-            selected.append(record)
-            blocked.append(number)
-        if len(selected) == count:
-            break
-    if len(selected) != count:
-        raise ValueError(
-            f"Sampling split tidak memenuhi target: perlu {count}, dapat {len(selected)} "
-            f"dengan jarak minimum {MIN_FRAME_GAP} frame."
-        )
+        if video_stem != last_video:
+            last_video = video_stem
+            last_selected_number = None
+        if any(abs(number - prior) < MIN_FRAME_GAP for prior in already_selected):
+            continue
+        if last_selected_number is not None and number - last_selected_number < MIN_FRAME_GAP:
+            continue
+        selected.append(record)
+        last_selected_number = number
     return selected
+
+
+def choose_spaced(records: list[dict], count: int, seed: int) -> list[dict]:
+    """Choose an exact, temporally distributed subset from a feasible spaced pool."""
+    if count < 0 or count > len(records):
+        raise ValueError(
+            f"Kapasitas sampling tidak cukup: perlu {count}, kapasitas layak {len(records)} "
+            f"pada jarak minimum {MIN_FRAME_GAP} frame."
+        )
+    if count == 0:
+        return []
+    # The input pool is already spaced. Select one random candidate from each
+    # temporal stratum so a feasible quota cannot fail due to random greedy order.
+    rng = random.Random(seed)
+    strata = np.array_split(np.arange(len(records)), count)
+    selected_indices = [rng.choice(stratum.tolist()) for stratum in strata]
+    return [records[index] for index in selected_indices]
 
 
 selected_records = []
@@ -419,11 +444,19 @@ for split_name, needed in needed_by_split.items():
         camera_id for camera_id in candidate_by_camera
         if SPLIT_NAME_BY_CAMERA[camera_id] == split_name
     )
-    capacity_by_camera = {camera_id: len(candidate_by_camera[camera_id]) for camera_id in camera_ids}
+    spaced_pool_by_camera = {
+        camera_id: build_spaced_pool(
+            candidate_by_camera[camera_id], existing_by_camera[camera_id]
+        )
+        for camera_id in camera_ids
+    }
+    capacity_by_camera = {
+        camera_id: len(spaced_pool_by_camera[camera_id]) for camera_id in camera_ids
+    }
     camera_quotas = allocate_camera_quota(capacity_by_camera, needed)
     for camera_id, quota in camera_quotas.items():
         chosen = choose_spaced(
-            candidate_by_camera[camera_id], existing_by_camera[camera_id], quota,
+            spaced_pool_by_camera[camera_id], quota,
             RANDOM_SEED + sum(ord(char) for char in camera_id),
         )
         selected_records.extend(chosen)

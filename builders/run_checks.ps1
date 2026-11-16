@@ -8,13 +8,18 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 Push-Location $projectRoot
+$previousErrorActionPreference = $ErrorActionPreference
 try {
-    & $python (Join-Path $projectRoot "test_pipeline_logic.py")
-    if ($LASTEXITCODE -ne 0) { throw "test_pipeline_logic.py gagal dengan exit code $LASTEXITCODE" }
-    & $python (Join-Path $projectRoot "builders\verify_dashboard_states.py")
-    if ($LASTEXITCODE -ne 0) { throw "verify_dashboard_states.py gagal dengan exit code $LASTEXITCODE" }
+    $ErrorActionPreference = "Continue"
+    & $python (Join-Path $projectRoot "test_pipeline_logic.py") 2>&1
+    $logicExitCode = $LASTEXITCODE
+    if ($logicExitCode -ne 0) { throw "test_pipeline_logic.py gagal dengan exit code $logicExitCode" }
+    & $python (Join-Path $projectRoot "builders\verify_dashboard_states.py") 2>&1
+    $dashboardExitCode = $LASTEXITCODE
+    if ($dashboardExitCode -ne 0) { throw "verify_dashboard_states.py gagal dengan exit code $dashboardExitCode" }
 }
 finally {
+    $ErrorActionPreference = $previousErrorActionPreference
     Pop-Location
 }
 

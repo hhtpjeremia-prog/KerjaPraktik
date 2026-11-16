@@ -63,7 +63,13 @@ import torch
 from PIL import Image, ImageDraw
 from IPython.display import Markdown, display
 
-from pipeline_common import build_roi_crop, near_duplicate_flags, SPLIT_NAME_BY_CAMERA
+from pipeline_common import (
+    DUPLICATE_HASH_DISTANCE,
+    DUPLICATE_WINDOW_FRAMES,
+    SPLIT_NAME_BY_CAMERA,
+    build_roi_crop,
+    near_duplicate_flags,
+)
 
 from pipeline_common import resolve_project_root
 RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
@@ -102,8 +108,6 @@ MIN_BOX_PIXELS = 5
 MAX_BOX_AREA_RATIO = 0.40
 CHUNK_FRAME_COUNT = 100
 SMOKE_FRAME_LIMIT = 12
-DUPLICATE_HASH_DISTANCE = 4
-DUPLICATE_WINDOW_FRAMES = 1
 HASH_PLACEHOLDER = -1
 PREVIEW_FRAMES_PER_CAMERA = 3
 

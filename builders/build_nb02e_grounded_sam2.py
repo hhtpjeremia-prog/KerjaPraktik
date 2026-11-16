@@ -58,15 +58,19 @@ proposal_payload = json.loads(PROPOSALS.read_text(encoding="utf-8"))
 if proposal_payload.get("status") != "complete":
     raise ValueError("Proposal NB02d belum complete; NB02e menolak output parsial.")
 
-def resolve_image_path(value):
+def resolve_project_path(value):
     path = Path(value)
-    candidates = [path, ROOT / path]
-    if "output" in path.parts:
-        candidates.append(ROOT / Path(*path.parts[path.parts.index("output"):]))
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    raise FileNotFoundError(f"Citra untuk mask tidak ditemukan: {value}")
+    resolved = path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+    try:
+        resolved.relative_to(ROOT)
+    except ValueError as error:
+        raise ValueError(f"Path manifest harus berada di dalam root proyek: {value}") from error
+    if not resolved.exists():
+        raise FileNotFoundError(f"Berkas untuk mask tidak ditemukan: {resolved}")
+    return resolved
+
+def store_project_path(path):
+    return Path(path).resolve().relative_to(ROOT).as_posix()
 
 from attribute_classifier import mask_cache_key
 
@@ -76,12 +80,12 @@ human_reviewed_stems = set()
 def add_request(frame_stem, image_value, box, class_name, source_name, split_name):
     if class_name not in ACTIVE_CLASSES:
         raise ValueError(f"Kelas sumber di luar taxonomy aktif: {frame_stem}: {class_name}")
-    image_path = resolve_image_path(image_value)
+    image_path = resolve_project_path(image_value)
     mask_id = mask_cache_key(frame_stem, box)
     request = {
         "mask_id": mask_id,
         "frame_stem": frame_stem,
-        "image_path": str(image_path),
+        "image_path": store_project_path(image_path),
         "box": [float(value) for value in box],
         "class_name": class_name,
         "source": source_name,
@@ -151,6 +155,10 @@ if (
     # current manifest. This makes annotation/model changes safely rerunnable.
     prior = {"schema_version": 2, "items": {}}
 done = prior.setdefault("items", {})
+for cached_item in done.values():
+    for path_field in ("image_path", "mask_path"):
+        if cached_item.get(path_field):
+            cached_item[path_field] = store_project_path(resolve_project_path(cached_item[path_field]))
 print(f"SAM2 {MODEL_ID} · device={DEVICE} · frames={len(selected_stems)} · boxes={len(selected_requests)} · cache={len(done)}")
 '''
 
@@ -161,11 +169,11 @@ for frame_stem in selected_stems:
     frame_requests = grouped_frames[frame_stem]
     if all(
         request["mask_id"] in done
-        and Path(done[request["mask_id"]]["mask_path"]).exists()
+        and resolve_project_path(done[request["mask_id"]]["mask_path"]).exists()
         for request in frame_requests
     ):
         continue
-    image_path = Path(frame_requests[0]["image_path"])
+    image_path = resolve_project_path(frame_requests[0]["image_path"])
     image = Image.open(image_path).convert("RGB")
     boxes = [[request["box"] for request in frame_requests]]
     inputs = processor(images=image, input_boxes=boxes, return_tensors="pt").to(DEVICE)
@@ -174,7 +182,7 @@ for frame_stem in selected_stems:
     masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())[0]
     quality = outputs.iou_scores[0].detach().cpu()
     for index, request in enumerate(frame_requests):
-        if request["mask_id"] in done and Path(done[request["mask_id"]]["mask_path"]).exists():
+        if request["mask_id"] in done and resolve_project_path(done[request["mask_id"]]["mask_path"]).exists():
             continue
         best_index = int(quality[index].argmax())
         mask = masks[index, best_index].numpy().astype(np.uint8) * 255
@@ -183,13 +191,13 @@ for frame_stem in selected_stems:
         done[request["mask_id"]] = {
             **request,
             "sam2_iou_score": float(quality[index, best_index]),
-            "mask_path": str(mask_path),
+            "mask_path": store_project_path(mask_path),
         }
     prior.update({
         "schema_version": 2,
         "status": "in_progress",
         "source_signature": source_signature,
-        "source_files": [str(path) for path in required_sources],
+        "source_files": [store_project_path(path) for path in required_sources],
         "sam2_model": MODEL_ID,
         "class_names": sorted(ACTIVE_CLASSES),
         "device": DEVICE,
@@ -200,12 +208,12 @@ required_mask_ids = {request["mask_id"] for request in selected_requests}
 all_mask_ids = {request["mask_id"] for request in all_requests}
 completed_mask_ids = {
     mask_id for mask_id in all_mask_ids
-    if mask_id in done and Path(done[mask_id]["mask_path"]).exists()
+    if mask_id in done and resolve_project_path(done[mask_id]["mask_path"]).exists()
 }
 prior.update({
     "schema_version": 2,
     "source_signature": source_signature,
-    "source_files": [str(path) for path in required_sources],
+    "source_files": [store_project_path(path) for path in required_sources],
     "source_frame_total": len(frame_stems),
     "source_box_total": len(all_requests),
     "processed_frame_total": len(set(item["frame_stem"] for item in selected_requests)),

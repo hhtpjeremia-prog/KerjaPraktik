@@ -25,18 +25,25 @@ from attribute_classifier import (  # noqa: E402
     ATTRIBUTE_BY_ANNOTATION_CLASS,
     ATTRIBUTE_NAMES,
     AttributeFusionCNN,
-    EMEANS_CLUSTER_COUNT,
     EMEANS_EPOCHS,
     EMEANS_SEED,
     IMAGE_TRANSFORM,
+    MASK_CENTROID_X_FEATURE_INDEX,
     MASK_FEATURE_VERSION,
+    MASK_VALID_FEATURE_INDEX,
     MODEL_NUMERIC_FEATURE_SIZE,
     extract_image_crop,
     extract_mask_aware_features,
     mask_cache_key,
     save_classifier,
 )
-from feature_clustering import assign_e_means_clusters, cluster_one_hot, fit_e_means  # noqa: E402
+from feature_clustering import (  # noqa: E402
+    assign_e_means_clusters,
+    cluster_one_hot,
+    elbow_k_from_objectives,
+    fit_e_means,
+    mean_squared_quantization_error,
+)
 
 ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 OUTPUT = ROOT / "output"
@@ -50,11 +57,15 @@ WARMUP_HEAD_EPOCHS = 5
 MIN_TRAIN_PER_CLASS = 20
 MIN_VAL_PER_CLASS = 5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+EMEANS_K_MIN = 2
+EMEANS_K_SEARCH_MAX = 12
+EMEANS_SELECTION_RESTARTS = 3
 
 TRAIN_AUGMENT = transforms.Compose([
     transforms.ColorJitter(brightness=0.20, contrast=0.20, saturation=0.08, hue=0.0),
 ])
-MASK_CENTROID_X_FEATURE = 35 + 35 + 3
+MASK_CENTROID_X_FEATURE = MASK_CENTROID_X_FEATURE_INDEX
+EMPTY_MASK_MAX_FRACTION = 0.01
 
 
 @dataclass(frozen=True)
@@ -112,13 +123,17 @@ class CropDataset(Dataset):
 
 def resolve_path(value: str | Path) -> Path:
     path = Path(value)
-    candidates = [path, ROOT / path]
-    if "output" in path.parts:
-        candidates.append(ROOT / Path(*path.parts[path.parts.index("output"):]))
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    raise FileNotFoundError(f"file input tidak ditemukan: {value}")
+    if path.is_absolute():
+        resolved = path.resolve()
+    else:
+        resolved = (ROOT / path).resolve()
+    try:
+        resolved.relative_to(ROOT)
+    except ValueError as error:
+        raise ValueError(f"path manifest keluar dari root proyek: {value}") from error
+    if not resolved.exists():
+        raise FileNotFoundError(f"file input tidak ditemukan: {resolved}")
+    return resolved
 
 
 def load_examples(*, include_test: bool = True) -> tuple[list[Example], set[str], dict]:
@@ -156,7 +171,6 @@ def load_examples(*, include_test: bool = True) -> tuple[list[Example], set[str]
                     f"Frame anotasi manual {frame_stem} memiliki split {split!r}; "
                     "NB04b hanya menerima manual train/val dan GT dari store terpisah."
                 )
-            image_path = resolve_path(record["image_path"])
             for box_entry in entry.get("boxes", []):
                 class_name = box_entry.get("class_name")
                 if box_entry.get("deleted") or class_name not in ATTRIBUTE_BY_ANNOTATION_CLASS:
@@ -167,7 +181,7 @@ def load_examples(*, include_test: bool = True) -> tuple[list[Example], set[str]
                 if mask_record is None:
                     raise FileNotFoundError(f"Mask SAM2 tidak ada: {frame_stem}, bbox={box}")
                 examples.append(Example(
-                    image_path=image_path, box=box,
+                    image_path=resolve_path(mask_record["image_path"]), box=box,
                     label=int(ATTRIBUTE_BY_ANNOTATION_CLASS[class_name]), split=split,
                     mask_id=mask_id, mask_path=resolve_path(mask_record["mask_path"]), source=source_name,
                 ))
@@ -190,7 +204,7 @@ def load_examples(*, include_test: bool = True) -> tuple[list[Example], set[str]
                 if mask_record is None:
                     raise FileNotFoundError(f"Mask pseudo train tidak ada: {record['frame_stem']}, bbox={box}")
                 examples.append(Example(
-                    image_path=resolve_path(record["image_path"]), box=box,
+                    image_path=resolve_path(mask_record["image_path"]), box=box,
                     label=int(ATTRIBUTE_BY_ANNOTATION_CLASS[class_name]), split="train",
                     mask_id=mask_id, mask_path=resolve_path(mask_record["mask_path"]),
                     source="grounding_dino_pseudo",
@@ -255,7 +269,7 @@ def evaluate(model, loader, loss_function) -> dict[str, float] | None:
     return calculate_metrics(torch.cat(logits_rows), torch.cat(label_rows), total_loss / max(total_items, 1))
 
 
-def prepare_feature_encodings(examples: list[Example]):
+def prepare_feature_encodings(examples: list[Example], model_dir: Path):
     raw_by_mask: dict[str, np.ndarray] = {}
     for example in examples:
         if example.mask_id in raw_by_mask:
@@ -266,15 +280,94 @@ def prepare_feature_encodings(examples: list[Example]):
             )
     if any(len(values) != MODEL_NUMERIC_FEATURE_SIZE for values in raw_by_mask.values()):
         raise ValueError("Dimensi fitur mask-aware berubah; periksa versi feature extractor.")
+    empty_mask_ids = [
+        mask_id for mask_id, values in raw_by_mask.items()
+        if values[MASK_VALID_FEATURE_INDEX] < 0.5
+    ]
+    empty_mask_fraction = len(empty_mask_ids) / max(len(raw_by_mask), 1)
+    mask_quality = {
+        "unique_masks": len(raw_by_mask),
+        "empty_masks": len(empty_mask_ids),
+        "empty_mask_fraction": empty_mask_fraction,
+        "maximum_allowed_fraction": EMPTY_MASK_MAX_FRACTION,
+        "empty_mask_photometry_policy": "zero vector; mask-validity feature is 0",
+    }
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "mask_quality.json").write_text(
+        json.dumps(mask_quality, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    if empty_mask_fraction > EMPTY_MASK_MAX_FRACTION:
+        raise RuntimeError(
+            f"Mask kosong {len(empty_mask_ids)}/{len(raw_by_mask)} ({empty_mask_fraction:.2%}) "
+            f"melebihi batas {EMPTY_MASK_MAX_FRACTION:.0%}; rincian: {model_dir / 'mask_quality.json'}"
+        )
     train_mask_ids = list(dict.fromkeys(example.mask_id for example in examples if example.split == "train"))
     train_matrix = np.stack([raw_by_mask[key] for key in train_mask_ids]).astype(np.float32)
     mean = train_matrix.mean(axis=0).astype(np.float32)
     std = np.maximum(train_matrix.std(axis=0), 1e-6).astype(np.float32)
     normalized = {key: ((value - mean) / std).astype(np.float32) for key, value in raw_by_mask.items()}
     train_normalized = np.stack([normalized[key] for key in train_mask_ids])
+    max_k = min(EMEANS_K_SEARCH_MAX, len(train_mask_ids) - 1)
+    candidate_ks = list(range(EMEANS_K_MIN, max_k + 1))
+    if len(candidate_ks) < 3:
+        raise RuntimeError(
+            f"Elbow e-means memerlukan minimal tiga kandidat k; train hanya memiliki {len(train_mask_ids)} mask unik."
+        )
+    selection_rows = []
+    model_dir.mkdir(parents=True, exist_ok=True)
+    selection_path = model_dir / "emeans_k_selection.csv"
+    pd.DataFrame(columns=[
+        "k", "mean_train_objective", "std_train_objective", "selection_restarts"
+    ]).to_csv(selection_path, index=False)
+    for k_value in candidate_ks:
+        seed_objectives = []
+        for restart in range(EMEANS_SELECTION_RESTARTS):
+            candidate_centroids, _, _ = fit_e_means(
+                train_normalized,
+                n_clusters=k_value,
+                epochs=EMEANS_EPOCHS,
+                seed=EMEANS_SEED + restart,
+            )
+            seed_objectives.append(mean_squared_quantization_error(train_normalized, candidate_centroids))
+        selection_rows.append({
+            "k": k_value,
+            "mean_train_objective": float(np.mean(seed_objectives)),
+            "std_train_objective": float(np.std(seed_objectives)),
+            "selection_restarts": EMEANS_SELECTION_RESTARTS,
+        })
+        pd.DataFrame(selection_rows).to_csv(selection_path, index=False)
+    selection_frame = pd.DataFrame(selection_rows)
+    selection_frame["bic_delta_to_linear"] = np.nan
+    selection_frame["selected"] = False
+    selection_frame.to_csv(selection_path, index=False)
+    selected_k, elbow_scores = elbow_k_from_objectives(
+        [row["k"] for row in selection_rows],
+        [row["mean_train_objective"] for row in selection_rows],
+    )
+    for row, score in zip(selection_rows, elbow_scores):
+        row["bic_delta_to_linear"] = score
+        row["selected"] = row["k"] == selected_k
+    selection_frame = pd.DataFrame(selection_rows)
+    selection_frame.to_csv(selection_path, index=False)
+    try:
+        import matplotlib.pyplot as plt
+        figure, axis = plt.subplots(figsize=(8, 5))
+        axis.errorbar(
+            selection_frame["k"], selection_frame["mean_train_objective"],
+            yerr=selection_frame["std_train_objective"], marker="o", capsize=3,
+        )
+        axis.axvline(selected_k, color="tab:red", linestyle="--", label=f"elbow k={selected_k}")
+        axis.set(title="Pemilihan jumlah cluster e-means (train only)", xlabel="Jumlah cluster (k)", ylabel="Mean squared distance")
+        axis.grid(alpha=0.25)
+        axis.legend()
+        figure.tight_layout()
+        figure.savefig(model_dir / "emeans_k_selection.png", dpi=140)
+        plt.close(figure)
+    except Exception as error:
+        print(f"Peringatan: gagal membuat plot pemilihan k e-means: {error}")
     centroids, _, cluster_metadata = fit_e_means(
         train_normalized,
-        n_clusters=min(EMEANS_CLUSTER_COUNT, len(train_mask_ids)),
+        n_clusters=selected_k,
         epochs=EMEANS_EPOCHS,
         seed=EMEANS_SEED,
     )
@@ -286,6 +379,12 @@ def prepare_feature_encodings(examples: list[Example]):
         str(index): int((train_labels == index).sum()) for index in range(len(centroids))
     }
     cluster_metadata["fit_split"] = "train_only"
+    cluster_metadata["selection_method"] = "BIC comparison: linear objective vs interior segmented-linear elbow"
+    cluster_metadata["candidate_k"] = candidate_ks
+    cluster_metadata["selected_k"] = selected_k
+    cluster_metadata["selection_restarts_per_k"] = EMEANS_SELECTION_RESTARTS
+    cluster_metadata["selection_curve_csv"] = selection_path.resolve().relative_to(ROOT).as_posix()
+    cluster_metadata["mask_quality"] = mask_quality
     return mean, std, centroids, cluster_metadata, normalized, cluster_by_mask
 
 
@@ -306,7 +405,8 @@ def main(*, output_dir: Path | None = None, include_test_eval: bool = True) -> N
     if low_train or low_val:
         raise RuntimeError(f"Sampel kelas kurang. Train={low_train}; validation={low_val}.")
 
-    feature_mean, feature_std, centroids, cluster_metadata, features_by_mask, clusters_by_mask = prepare_feature_encodings(examples)
+    model_dir = Path(output_dir) if output_dir is not None else MODEL_DIR
+    feature_mean, feature_std, centroids, cluster_metadata, features_by_mask, clusters_by_mask = prepare_feature_encodings(examples, model_dir)
     mirror_offset = (1.0 - 2.0 * feature_mean[MASK_CENTROID_X_FEATURE]) / feature_std[MASK_CENTROID_X_FEATURE]
     train_loader = DataLoader(CropDataset(train, features_by_mask, clusters_by_mask, centroids, mirror_offset, True), batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
     val_loader = DataLoader(CropDataset(val, features_by_mask, clusters_by_mask, centroids, mirror_offset), batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
@@ -372,7 +472,6 @@ def main(*, output_dir: Path | None = None, include_test_eval: bool = True) -> N
     if test_metrics:
         for key, value in test_metrics.items():
             history[f"test_{key}"] = value
-    model_dir = Path(output_dir) if output_dir is not None else MODEL_DIR
     model_dir.mkdir(parents=True, exist_ok=True)
     history_path = model_dir / "training_history.csv"
     plot_path = model_dir / "training_curves.png"

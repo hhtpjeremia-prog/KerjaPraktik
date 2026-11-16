@@ -28,6 +28,9 @@ SPLIT_NAME_BY_CAMERA = {
     "bogor-kab-pemda2": "val",
 }
 MAX_CROP_SIDE = 640
+DEDUP_HASH_IMAGE_SIZE = (9, 8)
+DUPLICATE_WINDOW_FRAMES = 1
+DUPLICATE_HASH_DISTANCE = 4
 MOBIL_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Mobil")]
 MOTOR_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Motor")]
 COUNT_CONTRACT = {
@@ -172,7 +175,7 @@ def resolve_project_root(start_path: str | Path) -> Path:
     )
 
 
-def difference_hash(gray_image, hash_image_size: tuple[int, int] = (9, 8)) -> int:
+def difference_hash(gray_image, hash_image_size: tuple[int, int] = DEDUP_HASH_IMAGE_SIZE) -> int:
     """Compute the shared dHash value from a grayscale image array."""
     image = Image.fromarray(np.asarray(gray_image, dtype=np.uint8)).convert("L")
     resized = np.asarray(image.resize(hash_image_size, Image.Resampling.LANCZOS), dtype=np.int16)

@@ -16,8 +16,10 @@ the current source and relevant documentation. Preserve any unrelated working-tr
   it was reviewed empty.
 - NB04b fuses ResNet18 RGB crop embedding with 77 numeric values: 35 bbox photometry features,
   35 SAM2 foreground photometry features, and 7 mask geometry features. E-means clusters standardized
-  numeric vectors; scaler and centroids fit train only. Validation/test are assigned to saved
-  centroids. The test set must not influence fit or checkpoint selection.
+  numeric vectors. K is selected by BIC comparison between a linear objective and an interior segmented-linear elbow,
+  using train-only objective values for k=2..12 and three restarts per candidate. If no elbow is supported,
+  training stops and the completed candidate objectives remain in CSV. The final scaler and centroids fit train only. Validation/test are
+  assigned to saved centroids. The test set must not influence fit or checkpoint selection.
 - NB06 recomputes SAM2 mask-aware features and uses saved classifier scaler/centroids. `PantulanCahaya`
   is background in the presentation overlay; Standar masks are blue, TidakStandar masks red. Only
   `MobilTidakStandar` and `MotorTidakStandar` get red boxes and contribute to line-crossing counting.

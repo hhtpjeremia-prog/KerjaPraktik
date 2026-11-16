@@ -286,24 +286,13 @@ import cv2
 import numpy as np
 
 from IPython.display import Markdown, display
-from pipeline_common import difference_hash, near_duplicate_flags
-
-HASH_IMAGE_SIZE = (9, 8)
-DUPLICATE_WINDOW_FRAMES = 1
-DUPLICATE_HASH_DISTANCE = 4
-
-
-def frame_dhash(frame, hash_image_size: tuple[int, int]) -> int:
-    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    return difference_hash(gray_frame, hash_image_size)
-
-
-def duplicate_flags(frame_hashes: list[int]) -> list[bool]:
-    return near_duplicate_flags(
-        frame_hashes,
-        window_frames=DUPLICATE_WINDOW_FRAMES,
-        distance_threshold=DUPLICATE_HASH_DISTANCE,
-    )
+from pipeline_common import (
+    DEDUP_HASH_IMAGE_SIZE,
+    DUPLICATE_HASH_DISTANCE,
+    DUPLICATE_WINDOW_FRAMES,
+    difference_hash,
+    near_duplicate_flags,
+)
 
 
 def build_dedup_manifest(frame_manifest_path: Path, dedup_manifest_path: Path) -> None:
@@ -315,9 +304,17 @@ def build_dedup_manifest(frame_manifest_path: Path, dedup_manifest_path: Path) -
     for video_path, frame_path_text in frame_entries:
         sampled_frame = cv2.imread(frame_path_text)
         hashes_by_video.setdefault(video_path, []).append(
-            frame_dhash(sampled_frame, HASH_IMAGE_SIZE) if sampled_frame is not None else -1
+            difference_hash(cv2.cvtColor(sampled_frame, cv2.COLOR_BGR2GRAY), DEDUP_HASH_IMAGE_SIZE)
+            if sampled_frame is not None else -1
         )
-    duplicate_by_video = {video_path: duplicate_flags(frame_hashes) for video_path, frame_hashes in hashes_by_video.items()}
+    duplicate_by_video = {
+        video_path: near_duplicate_flags(
+            frame_hashes,
+            window_frames=DUPLICATE_WINDOW_FRAMES,
+            distance_threshold=DUPLICATE_HASH_DISTANCE,
+        )
+        for video_path, frame_hashes in hashes_by_video.items()
+    }
     positions_by_video = {video_path: 0 for video_path in hashes_by_video}
     with dedup_manifest_path.open("w", newline="", encoding="utf-8") as dedup_file:
         dedup_writer = csv.writer(dedup_file)

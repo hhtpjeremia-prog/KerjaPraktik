@@ -32,6 +32,13 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 $env:RISET_PROJECT_ROOT = $projectRoot
 $env:PIPELINE_SMOKE = "0"
 
+$checkLogPath = Join-Path $runRoot "preflight_checks.log"
+Write-Host "Menjalankan pemeriksaan logika dan dashboard sebelum pipeline..." -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot "run_checks.ps1") 2>&1 | Tee-Object -FilePath $checkLogPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Preflight checks gagal. Log: $checkLogPath"
+}
+
 $stageResults = [System.Collections.Generic.List[object]]::new()
 $script:runStatus = "running"
 

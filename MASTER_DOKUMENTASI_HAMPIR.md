@@ -1,14 +1,14 @@
-﻿# Master Dokumentasi â€” Riset HampirMatang
+# Master Dokumentasi â€” Riset HampirMatang
 
-> **Kontrak aktif (2026-11-16; mengesampingkan bagian historis yang bertentangan di bawah).** Anotasi, Grounding DINO base, YOLO, dan CNN memakai lima kelas sama: `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`, `PantulanCahaya`. `BelumDitentukan` bukan kelas model. Continued fine-tune dibatalkan dan notebook-nya dihapus; output lama arsip. Pseudo-label FM boleh masuk train, tidak menggantikan gold validation/test. NB02e membangun mask SAM2 untuk fitur classifier; NB04b memadukan RGB, 77 fitur numerik bbox+mask, dan one-hot e-means yang fit hanya pada train. NB06 menghitung ulang fitur dari mask SAM2 untuk inferensi dan overlay. Mask untuk kelas Standar/TidakStandar tampil; PantulanCahaya menjadi background; bbox/counting hanya kelas TidakStandar. E-means adalah fitur eksperimen, belum terbukti meningkatkan akurasi. Counting utama adalah satu crossing per vehicle track TidakStandar; bbox-per-frame disimpan sebagai metrik pendamping. Garis awal diset pada y=72% tinggi frame, dipotong ke ROI, dan arah crossing dicatat. Perbaikan ROI sebelumnya: [PONYTAIL_REMEDIATION_2026-11-12.md](PONYTAIL_REMEDIATION_2026-11-12.md).
+> **Kontrak aktif (2026-11-17; mengesampingkan bagian historis yang bertentangan di bawah).** Anotasi, Grounding DINO base, YOLO, dan CNN memakai lima kelas sama: `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`, `PantulanCahaya`. `BelumDitentukan` bukan kelas model. Continued fine-tune dibatalkan dan notebook-nya dihapus; output lama arsip. Pseudo-label FM boleh masuk train, tidak menggantikan gold validation/test. NB02e membangun mask SAM2 untuk fitur classifier; NB04b memadukan RGB, 77 fitur numerik bbox+mask, dan one-hot e-means yang fit hanya pada train. NB06 menghitung ulang fitur dari mask SAM2 untuk inferensi dan overlay. Mask untuk kelas Standar/TidakStandar tampil; PantulanCahaya menjadi background; bbox/counting hanya kelas TidakStandar. E-means adalah fitur eksperimen, belum terbukti meningkatkan akurasi. Counting utama adalah satu crossing per vehicle track TidakStandar; bbox-per-frame disimpan sebagai metrik pendamping. Garis awal diset pada y=72% tinggi frame, dipotong ke ROI, dan arah crossing dicatat. Dokumen audit superseded dipertahankan di `archive/superseded-project-notes/README.md`.
 
 
 **Proyek:** Deteksi Lampu Kendaraan Malam Hari di Jalan Raya Kabupaten Bogor
 **Dataset:** `CCTV Kab Bogor_ Raya Lintang Kita (Rawamurang) (2026-08-01)`
 **Repo lokal:** `TugasJere/KerjaPraktik/Riset-HampirMatang/`
-**Revisi terakhir:** 2026-11-16 (kontrak lima kelas; base FM; SAM2 mask overlay wajib di NB06)
+**Revisi terakhir:** 2026-11-17 (Ponytail Audit 2; mask-quality guard; e-means k-selection; reproducible checks)
 
-> **Audit tindak lanjut 2026-11-12.** Lihat `PONYTAIL_REMEDIATION_2026-11-12.md` untuk matriks temuan/perbaikan dan batas verifikasi. Temuan ROI menunjukkan 81 entri metadata anotasi memiliki ukuran lama, sementara koordinat bbox sesuai gambar ROI aktif; metadata store/COCO dan export YOLO lokal telah diperbaiki tanpa menggeser bbox. NB06 kini mendeteksi pada crop ROI seperti saat training lalu memetakan bbox ke frame penuh. Karena label YOLO ternormalisasi berubah, jalankan NB03 lalu NB04, NB04b, NB05, dan NB06 untuk menghasilkan artefak yang konsisten. Training ulang bukan bukti kualitas; evaluasi hasil baru tetap diperlukan.
+> **Catatan historis 2026-11-12.** Dokumen Ponytail terkait dipertahankan di `archive/superseded-project-notes/`; implementasi aktif dan panduan rerun tercantum di README dan builders. Temuan ROI pada waktu itu memperbaiki metadata store/COCO dan export YOLO lokal; rincian historis tidak menjadi petunjuk rerun untuk perubahan terkini.
 
 > **Kontrak aktif sebelumnya (2026-11-12; superseded 2026-11-13).** Annotation store sudah dimigrasikan ke 4 kelas kendaraan/kondisi:
 > `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`. `PantulanCahaya`
@@ -173,7 +173,7 @@ merekomendasikan perubahan berikut; seluruhnya sudah diimplementasikan:
    lalu re-run NB02 penuh.**
 
 Referensi: benchmark `bench_nb02_verifier.py` (2026-10-19), statistik blob
-`diag_blob_stats_nb02.py` (400 frame), `REVIEW_2026-10-18.md` (P0-2 ikut
+`diag_blob_stats_nb02.py` (400 frame), arsip `archive/superseded-project-notes/REVIEW_2026-10-18.md` (P0-2 ikut
 diperbaiki).
 
 ---
@@ -192,7 +192,7 @@ membuktikan kepatuhan terhadap ambang candela/lux dalam regulasi.
 | Store anotasi / COCO | `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`, `PantulanCahaya` | Lima kelas anotasi manual yang menjadi sumber target supervised. |
 | Grounding DINO base | Lima kelas anotasi | Proposal pseudo-label menggunakan kelas yang sama dengan store anotasi; masuk sebagai tambahan train. |
 | YOLO | Lima kelas anotasi | Melokalisasi kelas kendaraan dan PantulanCahaya; PantulanCahaya disaring sebelum ByteTrack. |
-| NB04b classifier | Lima kelas anotasi | ResNet18 menggabungkan crop RGB, 77 fitur numerik (35 bbox photometry + 35 foreground-mask photometry + 7 geometri mask), dan 8 cluster e-means one-hot; scaler dan centroid hanya fit train. |
+| NB04b classifier | Lima kelas anotasi | ResNet18 menggabungkan crop RGB, 77 fitur numerik (35 bbox photometry + 35 foreground-mask photometry + 7 geometri mask), dan one-hot e-means dengan k hasil seleksi BIC; scaler dan centroid hanya fit train. Mask kosong memakai vektor foreground nol dan dicatat; proporsi di atas 1% menghentikan training. |
 | NB06 | kelas hasil classifier per track | YOLO memberi bbox/track, CNN menentukan kelas; crossing line menghitung track MobilTidakStandar dan MotorTidakStandar satu kali per video. |
 
 ### Satuan angka dan evaluasi
@@ -223,7 +223,7 @@ citra CNN saat training. Fitur HSV adalah proksi dari video yang dapat dipengaru
 balance, blur, dan kompresi; ia bukan alat ukur intensitas cahaya fisik.
 
 Kelas Silau/Berwarna dan rencana reference patches pada bagian historis tidak menjadi target model
-aktif. Rujuk README untuk urutan rerun, `PONYTAIL_REMEDIATION_2026-11-12.md` untuk audit/perbaikan,
+aktif. Rujuk README untuk urutan rerun, arsip audit untuk konteks historis,
 dan `RISK_REGISTER.md` untuk status risiko yang sudah disaring.
 
 ---
@@ -1542,4 +1542,4 @@ NB02e versi teacher/pseudo-label kondisi di atas dipensiunkan. **NB02e aktif per
 
 ### Kontrak fitur CNN aktif per 16 November 2026
 
-Cabang numerik NB04b menggabungkan 35 statistik warna/HSV seluruh bbox, 35 statistik warna pada piksel foreground SAM2, dan 7 fitur geometri mask. E-means membentuk 8 cluster dari vektor numerik terstandar; scaler dan centroid dipelajari dari contoh split train saja, lalu cluster validation/test dipetakan ke centroid itu. CNN menerima crop RGB 224×224, 77 fitur numerik, dan vektor one-hot cluster. Saat NB06, SAM2 membuat mask dan fitur pada koordinat crop ROI yang sama seperti training; mask dipetakan ke frame asli hanya untuk overlay. Centroid tersimpan di checkpoint dipakai untuk assignment. Perubahan store, proposal, atau model SAM2 mengharuskan NB02e → NB04b → NB06 dijalankan ulang. E-means tidak memakai label target dan merupakan eksperimen fitur, bukan jaminan peningkatan akurasi.
+Cabang numerik NB04b menggabungkan 35 statistik warna/HSV seluruh bbox, 35 statistik warna pada piksel foreground SAM2, dan 7 fitur geometri mask. Jumlah cluster dipilih dengan membandingkan model objective linear terhadap model segmented-linear satu elbow interior memakai BIC, dengan kandidat `k=2..12` dan tiga restart per kandidat. Jika tidak ada elbow interior yang didukung, training berhenti setelah menyimpan objective seluruh kandidat ke `output/attribute_classifier/emeans_k_selection.csv`; tidak ada fallback k tetap. Kurva terpilih juga disimpan ke `.png`. Mask kosong menghasilkan 35 fitur foreground nol, dicatat pada `mask_quality.json`, dan menghentikan training jika proporsinya melebihi 1%. Scaler serta centroid final dipelajari dari split train saja, lalu validation/test dipetakan ke centroid itu. CNN menerima crop RGB 224×224, 77 fitur numerik, dan one-hot dengan lebar sesuai `k` terpilih. Saat NB06, SAM2 membuat mask dan fitur pada koordinat crop ROI yang sama seperti training; mask dipetakan ke frame asli hanya untuk overlay. Centroid tersimpan di checkpoint dipakai untuk assignment. Perubahan store, proposal, atau model SAM2 mengharuskan NB02e → NB04b → NB06 dijalankan ulang. E-means tidak memakai label target dan tidak menjamin peningkatan akurasi.

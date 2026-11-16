@@ -65,6 +65,9 @@ AUDIT_*.md
 *.log
 runs/
 wandb/
+vendor/.emeans-stage-*/
+Bimbingan.txt
+FLOWCHART_INFRA_SAAT_INI.svg
 
 # === Tracking & Pipeline Outputs ===
 output/

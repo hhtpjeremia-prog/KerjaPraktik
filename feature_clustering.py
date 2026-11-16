@@ -91,8 +91,56 @@ def assign_e_means_clusters(features: np.ndarray, centroids: np.ndarray) -> np.n
     return labels
 
 
+def mean_squared_quantization_error(features: np.ndarray, centroids: np.ndarray) -> float:
+    """Mean squared distance to the nearest centroid, on the supplied data."""
+    matrix = np.asarray(features, dtype=np.float32)
+    centers = np.asarray(centroids, dtype=np.float32)
+    labels = assign_e_means_clusters(matrix, centers)
+    residual = matrix - centers[labels]
+    return float(np.mean(np.sum(residual * residual, axis=1)))
+
+
+def elbow_k_from_objectives(
+    k_values: list[int], objectives: list[float]
+) -> tuple[int, list[float]]:
+    """Select an interior elbow when a 2-segment model beats a linear trend by BIC."""
+    ks = np.asarray(k_values, dtype=np.float64)
+    losses = np.asarray(objectives, dtype=np.float64)
+    if ks.ndim != 1 or losses.shape != ks.shape or len(ks) < 3:
+        raise ValueError("elbow memerlukan minimal tiga pasangan k/objective")
+    if not np.all(np.diff(ks) > 0) or not np.all(np.isfinite(losses)):
+        raise ValueError("k harus naik berurutan dan objective harus finite")
+    loss_range = float(losses[0] - losses[-1])
+    if loss_range <= 0:
+        raise ValueError("objective tidak menurun pada rentang k; elbow tidak dapat dihitung")
+    x = (ks - ks[0]) / (ks[-1] - ks[0])
+    y = (losses - losses[-1]) / loss_range
+
+    def bic(design: np.ndarray) -> float:
+        coefficients, *_ = np.linalg.lstsq(design, y, rcond=None)
+        residual = y - design @ coefficients
+        rss_floor = np.finfo(np.float64).eps * max(float(np.sum(y * y)), 1.0)
+        rss = max(float(np.sum(residual * residual)), rss_floor)
+        return float(len(y) * np.log(rss / len(y)) + design.shape[1] * np.log(len(y)))
+
+    linear_bic = bic(np.column_stack((np.ones_like(x), x)))
+    bic_delta_by_index = [float("nan")] * len(ks)
+    best_index, best_bic = None, float("inf")
+    for knot_index in range(1, len(ks) - 1):
+        hinge = np.maximum(0.0, x - x[knot_index])
+        segmented_bic = bic(np.column_stack((np.ones_like(x), x, hinge)))
+        bic_delta_by_index[knot_index] = segmented_bic - linear_bic
+        if segmented_bic < best_bic:
+            best_index, best_bic = knot_index, segmented_bic
+    if best_index is None or best_bic >= linear_bic:
+        raise ValueError("kurva objective tidak mendukung elbow interior menurut BIC")
+    return int(ks[best_index]), bic_delta_by_index
+
+
 def cluster_one_hot(labels: np.ndarray, n_clusters: int) -> np.ndarray:
     labels = np.asarray(labels, dtype=np.int64).reshape(-1)
+    if n_clusters < 1:
+        raise ValueError("n_clusters harus positif")
     if np.any(labels < 0) or np.any(labels >= n_clusters):
         raise ValueError("label cluster berada di luar rentang centroid tersimpan")
     return np.eye(n_clusters, dtype=np.float32)[labels]

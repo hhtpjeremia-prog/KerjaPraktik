@@ -26,10 +26,22 @@ VEHICLE_TYPE_BY_ANNOTATION_CLASS = {
 }
 FEATURE_VERSION = "pixel-hsv-v1"
 FEATURE_SIZE = 35
-MASK_FEATURE_VERSION = "sam2-masked-hsv-shape-v1"
+MASK_FEATURE_VERSION = "sam2-masked-hsv-shape-v2-empty-zero"
 MASK_FEATURE_SIZE = 42
 MODEL_NUMERIC_FEATURE_SIZE = FEATURE_SIZE + MASK_FEATURE_SIZE
-EMEANS_CLUSTER_COUNT = 8
+MASK_SHAPE_FEATURE_OFFSET = FEATURE_SIZE * 2
+MASK_SHAPE_FEATURE_INDEX = {
+    "area_fraction": 0,
+    "width_fraction": 1,
+    "height_fraction": 2,
+    "centroid_x": 3,
+    "centroid_y": 4,
+    "compactness": 5,
+    "valid_mask": 6,
+}
+MASK_SHAPE_FEATURE_NAMES = tuple(MASK_SHAPE_FEATURE_INDEX)
+MASK_CENTROID_X_FEATURE_INDEX = MASK_SHAPE_FEATURE_OFFSET + MASK_SHAPE_FEATURE_INDEX["centroid_x"]
+MASK_VALID_FEATURE_INDEX = MASK_SHAPE_FEATURE_OFFSET + MASK_SHAPE_FEATURE_INDEX["valid_mask"]
 EMEANS_EPOCHS = 5
 EMEANS_SEED = 20261116
 BRIGHT_VALUE_THRESHOLD = 240
@@ -148,12 +160,15 @@ def extract_mask_aware_features(
         )
     crop_mask = full_mask[y1:y2, x1:x2] > 0
     valid_mask = bool(crop_mask.any())
-    foreground_pixels = crop[crop_mask] if valid_mask else crop.reshape(-1, 3)
-    masked_photometry = _pixel_features_from_rgb_pixels(foreground_pixels)
+    masked_photometry = (
+        _pixel_features_from_rgb_pixels(crop[crop_mask])
+        if valid_mask
+        else np.zeros(FEATURE_SIZE, dtype=np.float32)
+    )
 
-    shape_features = np.zeros(7, dtype=np.float32)
-    shape_features[0] = float(crop_mask.mean())
-    shape_features[6] = float(valid_mask)
+    shape_features = np.zeros(MASK_FEATURE_SIZE - FEATURE_SIZE, dtype=np.float32)
+    shape_features[MASK_SHAPE_FEATURE_INDEX["area_fraction"]] = float(crop_mask.mean())
+    shape_features[MASK_SHAPE_FEATURE_INDEX["valid_mask"]] = float(valid_mask)
     if valid_mask:
         ys, xs = np.nonzero(crop_mask)
         crop_height, crop_width = crop_mask.shape
@@ -161,11 +176,11 @@ def extract_mask_aware_features(
         min_y, max_y = int(ys.min()), int(ys.max())
         shape_width = max_x - min_x + 1
         shape_height = max_y - min_y + 1
-        shape_features[1] = shape_width / max(crop_width, 1)
-        shape_features[2] = shape_height / max(crop_height, 1)
-        shape_features[3] = float(xs.mean() / max(crop_width - 1, 1))
-        shape_features[4] = float(ys.mean() / max(crop_height - 1, 1))
-        shape_features[5] = float(crop_mask.sum() / max(shape_width * shape_height, 1))
+        shape_features[MASK_SHAPE_FEATURE_INDEX["width_fraction"]] = shape_width / max(crop_width, 1)
+        shape_features[MASK_SHAPE_FEATURE_INDEX["height_fraction"]] = shape_height / max(crop_height, 1)
+        shape_features[MASK_SHAPE_FEATURE_INDEX["centroid_x"]] = float(xs.mean() / max(crop_width - 1, 1))
+        shape_features[MASK_SHAPE_FEATURE_INDEX["centroid_y"]] = float(ys.mean() / max(crop_height - 1, 1))
+        shape_features[MASK_SHAPE_FEATURE_INDEX["compactness"]] = float(crop_mask.sum() / max(shape_width * shape_height, 1))
     bbox_photometry = extract_pixel_features(image, [x1, y1, x2, y2])
     features = np.concatenate([bbox_photometry, masked_photometry, shape_features]).astype(np.float32)
     if len(features) != MODEL_NUMERIC_FEATURE_SIZE:
@@ -180,9 +195,9 @@ class AttributeFusionCNN(nn.Module):
 
     def __init__(
         self,
+        cluster_count: int,
         pretrained: bool = False,
         feature_size: int = MODEL_NUMERIC_FEATURE_SIZE,
-        cluster_count: int = EMEANS_CLUSTER_COUNT,
     ) -> None:
         super().__init__()
         weights = models.ResNet18_Weights.DEFAULT if pretrained else None

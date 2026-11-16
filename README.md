@@ -1,6 +1,6 @@
-﻿# Riset-HampirMatang
+# Riset-HampirMatang
 
-> **Kontrak aktif 2026-11-16 (menggantikan kontrak lama di bawah).** Anotasi, Grounding DINO base,
+> **Kontrak aktif 2026-11-17 (menggantikan kontrak lama di bawah).** Anotasi, Grounding DINO base,
 > YOLO, dan CNN memakai lima kelas sama: `MobilStandar`, `MobilTidakStandar`, `MotorStandar`,
 > `MotorTidakStandar`, `PantulanCahaya`. `BelumDitentukan` bukan kelas model. Continued fine-tune
 > dibatalkan; notebook continued dihapus dan output/checkpoint lama hanya arsip. Pseudo-label FM
@@ -20,7 +20,8 @@ pendamping. Notebook pipeline utama di root **dibangun** dari
 Kelima kelas yang sama dipakai oleh Grounding DINO, YOLO, dan CNN. Proposal FM diterima sebagai
 tambahan pseudo-label train sesuai kebijakan proyek; hasil pseudo tidak dipakai untuk mengukur
 akurasi validation/test. NB02e membangkitkan mask SAM2 dari bbox. NB04b menggabungkan embedding RGB,
-77 fitur numerik bbox+mask, dan cluster e-means yang dipelajari hanya dari train. NB06 menghitung
+77 fitur numerik bbox+mask (fitur geometri ke-7 bernama `valid_mask`, untuk membedakan mask valid
+dari mask kosong), dan cluster e-means yang dipelajari hanya dari train. NB06 menghitung
 ulang fitur dan cluster dengan mask SAM2 per bbox.
 
 ## Menyiapkan environment
@@ -35,6 +36,10 @@ python -m venv .venv
 dari indeks PyTorch resmi; sisa paket tetap sama.
 
 ## Urutan menjalankan
+
+Runner menjalankan pemeriksaan logika pipeline dan dashboard terlebih dahulu melalui
+`builders/run_checks.ps1`. Jalankan pemeriksaan yang sama secara mandiri dengan
+`.\builders\run_checks.ps1` dari PowerShell.
 
 Jalankan per sel, berurutan, di VS Code dengan kernel `.venv` dan **cwd = root proyek** (notebook
 mengandalkan `from pipeline_common import ...` tanpa mengubah `sys.path`).
@@ -69,7 +74,7 @@ disiapkan, setelah training itu selesai gunakan:
 Saat notebook gagal, runner menyimpan log dan prompt diagnosis untuk ditinjau manusia. Runner tidak
 menjalankan agent yang dapat mengubah source berdasarkan teks output notebook. Ringkasan konteks proyek
 untuk diagnosis ada di [`builders/CODEX_RUNNER_CONTEXT.md`](builders/CODEX_RUNNER_CONTEXT.md).
-Status penanganan seluruh temuan Ponytail ada di [`PONYTAIL_AUDIT_REMEDIATION.md`](PONYTAIL_AUDIT_REMEDIATION.md).
+Dokumen audit lama yang telah digantikan dipertahankan di [`archive/superseded-project-notes/`](archive/superseded-project-notes/README.md); kontrak aktif ada di master dokumentasi dan kode sumber.
 
 Untuk menjalankan alur komputasi dari NB02d pada kesempatan lain, gunakan
 `-StartAt NB02d` hanya jika NB02d tidak sedang berjalan di proses lain. NB02b dan NB02c tetap perlu
@@ -84,7 +89,7 @@ holdout disimpan terpisah di `output/ground_truth/` melalui NB02c dan tidak bole
 
 ## Classifier atribut cahaya
 
-YOLO dan CNN memakai lima kelas identik. NB04b melatih ResNet18 supervised dengan embedding RGB, 77 angka (35 fitur HSV/statistik bbox, 35 fitur foreground mask SAM2, 7 geometri mask), dan 8 dimensi one-hot e-means. Scaler dan centroid e-means di-fit hanya dari train; validation memilih checkpoint, test dievaluasi terhadap GT yang tersedia. E-means tidak memakai label kelas dan tidak menjamin peningkatan akurasi. Weighted CrossEntropy menangani ketimpangan kelas. HSV/value dan mask adalah proksi citra, bukan pengukuran lux/candela.
+YOLO dan CNN memakai lima kelas identik. NB04b melatih ResNet18 supervised dengan embedding RGB, 77 angka (35 fitur HSV/statistik bbox, 35 fitur foreground mask SAM2, 7 geometri mask), dan one-hot cluster e-means. Jumlah cluster dipilih dengan BIC yang membandingkan objective linear dengan model segmented-linear ber-elbow interior, dari kandidat `k=2..12` dengan tiga restart per kandidat. Jika tidak ada elbow yang didukung BIC, training berhenti setelah menyimpan seluruh objective kandidat ke `emeans_k_selection.csv`; tidak ada fallback ke jumlah cluster tetap. Kurva yang berhasil dipilih juga disimpan sebagai `emeans_k_selection.png`. Mask kosong menghasilkan vektor foreground nol, dicatat pada `mask_quality.json`, dan menghentikan training jika melebihi 1%. Scaler dan centroid hanya di-fit dari train; validation memilih checkpoint, test dievaluasi terhadap GT yang tersedia. E-means tidak memakai label kelas dan tidak menjamin peningkatan akurasi. Weighted CrossEntropy menangani ketimpangan kelas. HSV/value dan mask adalah proksi citra, bukan pengukuran lux/candela.
 
 e-means memakai implementasi resmi Meta FAIR dari FAISS `v1.16.0`, vendored karena jalur assignment
 FAISS tidak dibutuhkan dan tidak praktis pada Windows; provenance dan pemasangannya dijelaskan di
@@ -304,7 +309,7 @@ pipeline ada di `trash_2026-10-26/` (lihat `RISK_REGISTER.md`).
 
 ## Catatan audit terbaru
 
-Tindak lanjut audit Ponytail dan koreksi metadata ROI (12 November 2026) dicatat di [`PONYTAIL_REMEDIATION_2026-11-12.md`](PONYTAIL_REMEDIATION_2026-11-12.md). Setelah perubahan anotasi/proposal, jalankan NB02e untuk menyegarkan mask, lalu NB03, NB04, NB04b, NB05, dan NB06 agar semua artefak turunan konsisten.
+Temuan audit lama dan tindak lanjutnya disimpan sebagai arsip; arsip tersebut bukan spesifikasi kode aktif.
 
 
 ## Dokumentasi proyek
@@ -312,10 +317,10 @@ Tindak lanjut audit Ponytail dan koreksi metadata ROI (12 November 2026) dicatat
 - [Master dokumentasi](MASTER_DOKUMENTASI_HAMPIR.md) â€” arsitektur lengkap dan catatan sejarah; bagian aktif ditandai di awal dokumen.
 - [Risk register](RISK_REGISTER.md) â€” snapshot risiko aktif dan log historis.
 - [Protokol ground truth](GROUND_TRUTH_GUIDE.md) â€” pemisahan anotasi train/validation dan holdout test.
-- [Audit Ponytail dan tindak lanjut](PONYTAIL_REMEDIATION_2026-11-12.md) â€” hasil review kode, koreksi ROI, dan batas verifikasi.
+- [Arsip audit dan catatan superseded](archive/superseded-project-notes/README.md) â€” disimpan untuk jejak historis, bukan panduan menjalankan pipeline.
 - [Rujukan ilmiah](RUJUKAN_INFRA_CV.md) dan [pengetahuan pipeline CV](KNOWLEDGE_PIPELINE_CV.md) â€” sumber akademik serta pola yang benar-benar relevan.
 - [Bar desain dashboard](dashboard/DESIGN.md) â€” aturan UI dan arti angka yang ditampilkan.
-- [Audit 28 Oktober](AUDIT_ACTION_2026-10-28.md), [handoff 4 November](AUDIT_HANDOFF_2026-11-04.md), dan [review 18 Oktober](REVIEW_2026-10-18.md) adalah rekaman historis, bukan kontrak implementasi terkini.
+- [Audit 28 Oktober](AUDIT_ACTION_2026-10-28.md) dan [handoff 4 November](AUDIT_HANDOFF_2026-11-04.md) adalah rekaman historis, bukan kontrak implementasi terkini. Review 18 Oktober dipindahkan ke arsip superseded.
 
 
 

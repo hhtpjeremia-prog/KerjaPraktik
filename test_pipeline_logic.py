@@ -8,7 +8,14 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from attribute_classifier import FEATURE_SIZE, extract_pixel_features
+from attribute_classifier import (
+    FEATURE_SIZE,
+    MASK_CENTROID_X_FEATURE_INDEX,
+    MASK_SHAPE_FEATURE_NAMES,
+    MASK_SHAPE_FEATURE_OFFSET,
+    MASK_SHAPE_FEATURE_INDEX,
+    extract_pixel_features,
+)
 from dashboard.data import (
     CAMERA_STATUS_COUNTED,
     STATE_EMPTY,
@@ -29,6 +36,7 @@ from pipeline_common import (
     training_class_name,
     validate_tracker_thresholds,
 )
+from feature_clustering import cluster_one_hot, elbow_k_from_objectives
 
 TRACK_COLUMNS = [
     "video_stem", "unit_id", "camera_id", "class_name", "hits", "first_frame", "last_frame", "mean_score",
@@ -230,6 +238,25 @@ def check_attributes_features_are_finite() -> None:
     assert np.isfinite(blue_features).all(), "fitur NaN saat crop berwarna"
     hue_histogram_total = float(blue_features[-16:].sum())
     assert abs(hue_histogram_total - 1.0) < 1e-5, hue_histogram_total
+    assert MASK_CENTROID_X_FEATURE_INDEX - MASK_SHAPE_FEATURE_OFFSET == MASK_SHAPE_FEATURE_INDEX["centroid_x"]
+    assert MASK_SHAPE_FEATURE_NAMES[MASK_CENTROID_X_FEATURE_INDEX - MASK_SHAPE_FEATURE_OFFSET] == "centroid_x"
+
+
+def check_emeans_k_selection_guards() -> None:
+    selected_k, _ = elbow_k_from_objectives([2, 3, 4, 5, 6], [100, 40, 30, 25, 20])
+    assert selected_k == 3, selected_k
+    try:
+        elbow_k_from_objectives([2, 3, 4, 5, 6], [100, 80, 60, 40, 20])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("elbow harus ditolak jika tidak ada knee interior yang didukung BIC")
+    try:
+        cluster_one_hot(np.asarray([0, 2]), n_clusters=2)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("cluster_one_hot harus menolak ID di luar rentang")
 
 
 def check_store_filter_keeps_only_active_frames() -> None:
@@ -331,6 +358,7 @@ def main() -> None:
         check_iou_bounds,
         check_training_class_names,
         check_attributes_features_are_finite,
+        check_emeans_k_selection_guards,
         check_store_filter_keeps_only_active_frames,
         check_dashboard_reports_empty_state,
         check_dashboard_count_formatting_is_honest,

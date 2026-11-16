@@ -18,7 +18,7 @@ def build_notebook() -> nbformat.NotebookNode:
         nbformat.v4.new_markdown_cell(
             "# NB04b — Weighted CNN kondisi lampu\n\n"
             "ResNet18 dengan bobot awal ImageNet menggabungkan embedding CNN, 77 fitur numerik "
-            "(35 photometry bbox, 35 photometry foreground mask SAM2, 7 geometri mask), dan 8 cluster "
+            "(35 photometry bbox, 35 photometry foreground mask SAM2, 7 geometri mask), dan cluster "
             "e-means one-hot untuk membedakan `MobilStandar`, `MobilTidakStandar`, "
             "`MotorStandar`, `MotorTidakStandar`, dan `PantulanCahaya`. Crop dipertahankan seluruhnya, rasio "
             "aspeknya dijaga, sisi terpanjang diubah ke 224 px, lalu padding mean ImageNet "
@@ -29,7 +29,12 @@ def build_notebook() -> nbformat.NotebookNode:
             "saja sambil membekukan BatchNorm backbone, lalu backbone di-fine-tune dengan "
             "learning rate lebih kecil. Fitur numerik dihitung dari crop/mask bersih sebelum augmentasi "
             "dan diskalakan memakai mean/std train saja. Centroid e-means juga di-fit hanya pada train; "
-            "validation/test di-assign ke centroid tersimpan. Horizontal flip mencerminkan fitur centroid-x "
+            "jumlah cluster dipilih dengan BIC yang membandingkan objective linear dengan segmented-linear "
+            "satu elbow interior pada k=2–12, tiga restart per k. Jika tidak ada elbow yang didukung, "
+            "training berhenti dan objective tiap kandidat tetap tersimpan di `emeans_k_selection.csv`; "
+            "kurva terpilih disimpan ke `emeans_k_selection.png`. Mask kosong memberi vektor foreground nol, "
+            "dicatat dalam `mask_quality.json`, dan proporsi di atas 1% menghentikan training. "
+            "Validation/test di-assign ke centroid tersimpan. Horizontal flip mencerminkan fitur centroid-x "
             "mask secara konsisten; ColorJitter hanya diterapkan pada citra CNN. "
             "NB02e harus selesai dengan manifest `complete` sebelum notebook ini dijalankan. "
             "Jika NB02c memiliki anotasi test yang sudah direview, metrik test dihitung terpisah. "
@@ -53,7 +58,7 @@ def build_notebook() -> nbformat.NotebookNode:
             "history_frame = pd.read_csv(history_path)\n"
             "display(history_frame.tail())\n"
             "display(Markdown('Plot lengkap tersimpan di `output/attribute_classifier/training_curves.png`. '\n"
-            "'Kolom test hanya ada bila test memiliki ground truth.'))\n"
+            "'Kolom test hanya ada bila test memiliki ground truth. Kurva pemilihan jumlah cluster ada di `emeans_k_selection.png`.'))\n"
         ),
     ], metadata={
         "kernelspec": {"name": "python3", "display_name": "Python 3"},

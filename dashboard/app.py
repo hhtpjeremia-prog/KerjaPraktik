@@ -54,6 +54,7 @@ STYLE_BLOCK = """
 def main() -> None:
     st.set_page_config(page_title=PAGE_TITLE, layout="wide")
     st.markdown(STYLE_BLOCK, unsafe_allow_html=True)
+    st.sidebar.caption(f"Sumber artefak NB06: `{resolve_nb06_root().resolve()}`")
     snapshot = load_counting_snapshot()
     render_header(snapshot.summary)
     if not render_state_notice(snapshot):

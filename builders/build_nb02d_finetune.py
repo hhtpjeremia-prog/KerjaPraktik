@@ -8,7 +8,7 @@ import nbformat
 
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_NOTEBOOK = ROOT / "NB02d_finetune_grounding_dino.ipynb"
+OUTPUT_NOTEBOOK_BASE = ROOT / "NB02d_finetune_grounding_dino_base.ipynb"
 EXPECTED_CODE_CELL_COUNT = 5
 EXPECTED_MARKDOWN_CELL_COUNT = 1
 
@@ -17,8 +17,10 @@ MARKDOWN = r"""# NB02d — Fine-tuning Grounding DINO untuk domain CCTV
 ## Tujuan dan batas kerja
 
 Notebook ini menyesuaikan **Grounding DINO-Tiny** ke tampilan kendaraan dan pantulan pada CCTV proyek, lalu
-membuat **proposal bbox tiga kelas** (`Mobil`, `Motor`, `PantulanCahaya`) untuk frame tambahan. Hasil model tetap proposal. Setiap frame
-dan bbox harus diperiksa/dikoreksi manusia di NB02b sebelum masuk label supervised YOLO dan CNN.
+membuat proposal bbox dengan **lima kelas anotasi** (`MobilStandar`, `MobilTidakStandar`, `MotorStandar`,
+`MotorTidakStandar`, `PantulanCahaya`) untuk frame tambahan. Sesuai kebijakan proyek, proposal base
+diterima sebagai pseudo-label tambahan di split train tanpa review satu per satu. Proposal val/test
+tidak ditambahkan ke dataset training/evaluasi.
 
 NB02d memakai anotasi train yang sudah direview untuk update bobot dan validation untuk memantau
 overfitting/memilih checkpoint. Metadata test hanya dipakai untuk memeriksa jumlah dan mencegah
@@ -29,9 +31,9 @@ NB02c tetap dibekukan untuk evaluasi final.
 
 Test dikunci pada **254 frame**. Agar split mendekati 65/15/20 berdasarkan jumlah frame, total
 akhir ditetapkan 1.270 frame: **826 train, 190 validation, 254 test** (65,04% / 14,96% / 20%).
-Data aktif sekarang berisi 195 train, 79 validation, dan 254 test; sehingga NB02d menyiapkan
-proposal untuk **631 train + 111 validation = 742 frame tambahan**. Persentase final baru tercapai
-setelah seluruh proposal ditinjau dan diekspor sebagai anotasi reviewed.
+Target akhir berdasarkan frame adalah **826 train, 190 validation, dan 254 test**. Jumlah proposal
+tambahan dihitung otomatis dari jumlah frame yang sudah reviewed pada annotation store saat notebook
+dijalankan; perubahan jumlah reviewed tidak perlu diperbaiki manual di source.
 
 ## Aliran kerja
 
@@ -39,15 +41,13 @@ setelah seluruh proposal ditinjau dan diekspor sebagai anotasi reviewed.
 2. Fine-tune Grounding DINO hanya dengan frame train berlabel manual/edit.
 3. Gunakan validation untuk memilih checkpoint terbaik; tidak ada update bobot dari validation.
 4. Ambil frame tambahan hanya dari kamera train/validation, dengan jarak sampling minimum.
-5. Simpan crop ROI dan proposal `Mobil`/`Motor`/`PantulanCahaya` ke `output/nb02d/proposal_manifest.json`.
-6. Buka NB02b untuk review semua frame tambahan. Koreksi bbox, tandai PantulanCahaya secara eksplisit,
-   dan tandai frame kosong setelah diperiksa. Jangan menerima pseudo-label tanpa pemeriksaan.
+5. Simpan crop ROI dan prediksi lima kelas ke manifest varian model.
+6. Proposal disimpan dengan provenance dan confidence. Review di NB02b tetap boleh untuk audit,
+   tetapi bukan syarat memasukkan pseudo-label train.
 7. Pastikan ekspor akhir NB02b berisi 826/190 frame; lalu jalankan NB03–NB06.
 
-FM memiliki tiga target deteksi: `Mobil`, `Motor`, dan `PantulanCahaya`. CNN NB04b juga dilatih
-dengan label `Standar`, `TidakStandar`, dan `PantulanCahaya`. Pantulan tetap dikeluarkan sebelum
-ByteTrack, overlay, dan counting. FM tidak memprediksi kondisi Standar/TidakStandar; label kondisi
-kendaraan tetap berasal dari review manusia dan CNN.
+Grounding DINO memprediksi lima kelas anotasi. CNN NB04b tetap model terpisah untuk klasifikasi kondisi
+pada pipeline inferensi NB06. Pantulan tetap dikeluarkan sebelum ByteTrack, overlay, dan counting.
 
 ## Catatan teknis
 
@@ -76,18 +76,15 @@ from IPython.display import Markdown, display
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
-from pipeline_common import (
-    SPLIT_NAME_BY_CAMERA, TRAINING_CLASS_NAMES, build_roi_crop,
-    load_roi_config, training_class_name,
-)
+from pipeline_common import CLASS_NAMES, SPLIT_NAME_BY_CAMERA, build_roi_crop, load_roi_config
 
-ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if ROOT.name not in {"NewStyle", "Riset-HampirMatang"}:
-    raise RuntimeError("Jalankan notebook dari root proyek atau set RISET_PROJECT_ROOT.")
+from pipeline_common import resolve_project_root
+ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT = ROOT / "output"
 ANNOTATION_ROOT = OUTPUT / "annotation"
 GT_ROOT = OUTPUT / "ground_truth"
-NB02D_ROOT = OUTPUT / "nb02d"
+RUN_VARIANT = "base"
+NB02D_ROOT = OUTPUT / "nb02d_fiveclass" / RUN_VARIANT
 IMAGE_DIR = NB02D_ROOT / "crops"
 CHECKPOINT_DIR = NB02D_ROOT / "checkpoints" / "best"
 HISTORY_PATH = NB02D_ROOT / "training_history.csv"
@@ -104,9 +101,18 @@ ROI_CONFIG = load_roi_config(OUTPUT / "roi")
 ROI_SIGNATURE = hashlib.sha256(json.dumps(ROI_CONFIG, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 MODEL_ID = "IDEA-Research/grounding-dino-tiny"
-PROMPT = "car. motorcycle. light reflection."
+FINE_TUNE_CLASS_NAMES = CLASS_NAMES
+PROMPT_PHRASES = [
+    "car with standard headlights",
+    "car with non-standard headlights",
+    "motorcycle with standard headlights",
+    "motorcycle with non-standard headlights",
+    "light reflection",
+]
+if len(PROMPT_PHRASES) != len(FINE_TUNE_CLASS_NAMES):
+    raise ValueError("Prompt phrase dan kelas anotasi harus berpasangan satu per satu.")
+PROMPT = ". ".join(PROMPT_PHRASES) + "."
 TARGETS = {"train": 826, "val": 190, "test": 254}
-EXPECTED_CURRENT = {"train": 195, "val": 79, "test": 254}
 MIN_FRAME_GAP = 30
 RANDOM_SEED = 20261113
 EPOCHS = int(os.environ.get("NB02D_EPOCHS", "8"))
@@ -126,8 +132,8 @@ if torch.cuda.is_available():
 
 display(Markdown(
     f"**NB02d siap** · device: `{DEVICE}` · model: `{MODEL_ID}` · "
-    f"frame proposal tambahan: {TARGETS['train']-EXPECTED_CURRENT['train']} train + "
-    f"{TARGETS['val']-EXPECTED_CURRENT['val']} validation."
+    f"target akhir: {TARGETS['train']} train + {TARGETS['val']} validation + {TARGETS['test']} test; "
+    "jumlah proposal dihitung dari reviewed count aktual."
 ))
 if DEVICE == "cpu":
     display(Markdown("> CPU terdeteksi. Fine-tuning Grounding DINO dapat berjalan sangat lambat; GPU CUDA disarankan."))'''
@@ -152,6 +158,13 @@ def reviewed_records(manifest: dict, store: dict, expected_split: str | None = N
             continue
         entry = store.get("frames", {}).get(record["frame_stem"], {})
         if entry.get("reviewed"):
+            unresolved = any(
+                not box_entry.get("deleted", False)
+                and box_entry.get("class_name") not in FINE_TUNE_CLASS_NAMES
+                for box_entry in entry.get("boxes", [])
+            )
+            if unresolved:
+                continue
             records.append({**record, "split": split, "annotation": entry})
     return records
 
@@ -160,10 +173,16 @@ reviewed_train = reviewed_records(train_manifest, train_store, "train")
 reviewed_val = reviewed_records(train_manifest, train_store, "val")
 reviewed_test = reviewed_records(test_manifest, test_store, "test")
 actual_counts = {"train": len(reviewed_train), "val": len(reviewed_val), "test": len(reviewed_test)}
-if actual_counts != EXPECTED_CURRENT:
+over_target = {split: count for split, count in actual_counts.items() if count > TARGETS[split]}
+if over_target:
     raise ValueError(
-        f"Jumlah label aktif berubah dari baseline yang direncanakan: {actual_counts}; "
-        f"expected {EXPECTED_CURRENT}. Hitung ulang TARGETS sebelum melanjutkan."
+        f"Jumlah frame reviewed sudah melebihi target akhir: {over_target}; targets {TARGETS}. "
+        "Jangan menghapus anotasi; sesuaikan target split secara eksplisit sebelum melanjutkan."
+    )
+if actual_counts["test"] != TARGETS["test"]:
+    raise ValueError(
+        f"GT test harus tetap {TARGETS['test']} frame reviewed; aktual {actual_counts['test']}. "
+        "Periksa manifest/annotation store ground truth tanpa mengubah split test."
     )
 train_val_stems = {r["frame_stem"] for r in reviewed_train + reviewed_val}
 test_stems = {r["frame_stem"] for r in reviewed_test}
@@ -207,15 +226,15 @@ class VehicleFrameDataset(Dataset):
         for box_entry in record["annotation"].get("boxes", []):
             if box_entry.get("deleted"):
                 continue
-            class_name = training_class_name(box_entry.get("class_name", ""))
-            if class_name not in TRAINING_CLASS_NAMES:
+            class_name = box_entry.get("class_name", "")
+            if class_name not in FINE_TUNE_CLASS_NAMES:
                 continue
             x1, y1, x2, y2 = [float(v) for v in box_entry["box"]]
             if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
                 raise ValueError(f"BBox manual keluar batas untuk {record['frame_stem']}: {box_entry['box']}")
             annotations.append({
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
-                "category_id": TRAINING_CLASS_NAMES.index(class_name),
+                "category_id": FINE_TUNE_CLASS_NAMES.index(class_name),
                 "area": (x2 - x1) * (y2 - y1),
                 "iscrowd": 0,
             })
@@ -249,16 +268,35 @@ train_dataset = VehicleFrameDataset(reviewed_train)
 val_dataset = VehicleFrameDataset(reviewed_val)
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_grounding_dino)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_grounding_dino)
-train_vehicle_boxes = sum(len(train_dataset[i]["target"]["annotations"]) for i in range(len(train_dataset)))
-val_vehicle_boxes = sum(len(val_dataset[i]["target"]["annotations"]) for i in range(len(val_dataset)))
+train_class_counts = Counter(
+    FINE_TUNE_CLASS_NAMES[annotation["category_id"]]
+    for index in range(len(train_dataset))
+    for annotation in train_dataset[index]["target"]["annotations"]
+)
+val_class_counts = Counter(
+    FINE_TUNE_CLASS_NAMES[annotation["category_id"]]
+    for index in range(len(val_dataset))
+    for annotation in val_dataset[index]["target"]["annotations"]
+)
+missing_train_classes = [name for name in FINE_TUNE_CLASS_NAMES if train_class_counts[name] == 0]
+if missing_train_classes:
+    raise ValueError(f"Kelas FM tanpa bbox train: {missing_train_classes}")
+display(pd.DataFrame([
+    {"Kelas FM": name, "BBox train": train_class_counts[name], "BBox validation": val_class_counts[name]}
+    for name in FINE_TUNE_CLASS_NAMES
+]))
+train_vehicle_boxes = sum(train_class_counts.values())
+val_vehicle_boxes = sum(val_class_counts.values())
 display(Markdown(
     f"Data fine-tune: **{len(train_dataset)} frame train / {train_vehicle_boxes} bbox kendaraan**. "
     f"Validation: **{len(val_dataset)} frame / {val_vehicle_boxes} bbox objek**. "
-    "PantulanCahaya menjadi target eksplisit kelas ketiga."
+    "Training memakai kelima kelas anotasi; periksa distribusi per kelas sebelum lanjut."
 ))'''
 
-TRAIN_SOURCE = r'''processor = AutoProcessor.from_pretrained(MODEL_ID)
-model = AutoModelForZeroShotObjectDetection.from_pretrained(MODEL_ID).to(DEVICE)
+TRAIN_SOURCE = r'''INITIAL_MODEL_SOURCE = MODEL_ID
+
+processor = AutoProcessor.from_pretrained(INITIAL_MODEL_SOURCE)
+model = AutoModelForZeroShotObjectDetection.from_pretrained(INITIAL_MODEL_SOURCE).to(DEVICE)
 
 # Bekukan encoder teks agar prompt bahasa tetap stabil; update bobot visual/detection Grounding DINO.
 for parameter in model.model.text_backbone.parameters():
@@ -340,8 +378,9 @@ plt.show()
 if best_epoch is None:
     raise RuntimeError("Checkpoint fine-tuned tidak berhasil disimpan.")
 display(Markdown(
-    f"Checkpoint terbaik: epoch **{best_epoch}** · validation loss **{best_val_loss:.4f}** · "
-    f"`{CHECKPOINT_DIR}`. Metrik ini memantau proposal detector; bukan evaluasi final test."
+    f"Varian **{RUN_VARIANT}** dari `{INITIAL_MODEL_SOURCE}`. Checkpoint terbaik: epoch **{best_epoch}**; "
+    f"validation loss **{best_val_loss:.4f}**; `{CHECKPOINT_DIR}`. "
+    "Validation loss bukan pengganti precision/recall/mAP per kelas atau evaluasi final test."
 ))'''
 
 PROPOSAL_SOURCE = r'''frames_rows = []
@@ -369,7 +408,7 @@ for record in existing_records:
     existing_by_camera[record["camera_id"]].append(frame_number)
 
 needed_by_split = {
-    split: TARGETS[split] - EXPECTED_CURRENT[split]
+    split: TARGETS[split] - actual_counts[split]
     for split in ("train", "val")
 }
 if any(value < 0 for value in needed_by_split.values()):
@@ -467,10 +506,19 @@ proposal_model = AutoModelForZeroShotObjectDetection.from_pretrained(CHECKPOINT_
 proposal_processor = AutoProcessor.from_pretrained(CHECKPOINT_DIR)
 
 
+def vehicle_family(class_name: str) -> str:
+    if class_name.startswith("Mobil"):
+        return "Mobil"
+    if class_name.startswith("Motor"):
+        return "Motor"
+    return class_name
+
+
 def class_aware_nms(detections: list[dict]) -> list[dict]:
+    """Suppress duplicate boxes across condition labels for the same vehicle type."""
     kept = []
-    for vehicle_type in TRAINING_CLASS_NAMES:
-        class_rows = [row for row in detections if row["vehicle_type"] == vehicle_type]
+    for family in ("Mobil", "Motor", "PantulanCahaya"):
+        class_rows = [row for row in detections if vehicle_family(row["class_name"]) == family]
         class_rows.sort(key=lambda row: row["score"], reverse=True)
         accepted = []
         for row in class_rows:
@@ -512,15 +560,22 @@ for position, record in enumerate(selected_records, start=1):
     )[0]
     detections = []
     for box, score, phrase in zip(result["boxes"], result["scores"], result["text_labels"]):
-        phrase = str(phrase).lower()
-        vehicle_type = (
-            "PantulanCahaya" if "reflection" in phrase
-            else "Motor" if "motorcycle" in phrase
-            else "Mobil" if "car" in phrase
-            else None
-        )
-        if vehicle_type not in TRAINING_CLASS_NAMES:
+        normalized_phrase = " ".join(str(phrase).lower().replace("-", " ").split())
+        if "reflection" in normalized_phrase:
+            class_name = "PantulanCahaya"
+        elif "motorcycle" in normalized_phrase and "non standard" in normalized_phrase:
+            class_name = "MotorTidakStandar"
+        elif "motorcycle" in normalized_phrase and "standard" in normalized_phrase:
+            class_name = "MotorStandar"
+        elif "car" in normalized_phrase and "non standard" in normalized_phrase:
+            class_name = "MobilTidakStandar"
+        elif "car" in normalized_phrase and "standard" in normalized_phrase:
+            class_name = "MobilStandar"
+        else:
+            class_name = None
+        if class_name not in FINE_TUNE_CLASS_NAMES:
             continue
+        vehicle_type = "Mobil" if class_name.startswith("Mobil") else "Motor" if class_name.startswith("Motor") else "PantulanCahaya"
         x1, y1, x2, y2 = [float(value) for value in box.detach().cpu().tolist()]
         x1, x2 = sorted((max(0.0, min(width, x1)), max(0.0, min(width, x2))))
         y1, y2 = sorted((max(0.0, min(height, y1)), max(0.0, min(height, y2))))
@@ -529,6 +584,7 @@ for position, record in enumerate(selected_records, start=1):
         detections.append({
             "box": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
             "score": round(float(score.detach().cpu()), 5),
+            "class_name": class_name,
             "vehicle_type": vehicle_type,
             "vehicle_vote": vehicle_type,
             "lamp_count": 0,
@@ -554,19 +610,22 @@ proposal_summary = {
     "random_seed": RANDOM_SEED,
     "min_frame_gap": MIN_FRAME_GAP,
     "thresholds": {"box": BOX_THRESHOLD, "text": TEXT_THRESHOLD, "class_nms_iou": NMS_IOU_THRESHOLD},
-    "current_reviewed_frames": EXPECTED_CURRENT,
+    "current_reviewed_frames": actual_counts,
     "target_frames": TARGETS,
     "new_proposal_frames": dict(needed_by_split),
     "proposal_boxes": sum(len(row["detections"]) for row in proposal_rows),
-    "class_names": TRAINING_CLASS_NAMES,
-    "human_review_required": True,
+    "class_names": FINE_TUNE_CLASS_NAMES,
+    "variant": RUN_VARIANT,
+    "initialized_from": str(INITIAL_MODEL_SOURCE),
+    "human_review_required": False,
+    "pseudo_label_policy": "train_only; validation/test pseudo labels excluded",
     "frames": proposal_rows,
 }
 PROPOSAL_PATH.write_text(json.dumps(proposal_summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
 proposal_counts = Counter(row["split"] for row in proposal_rows)
 box_counts = Counter(
-    detection["vehicle_type"]
+    detection["class_name"]
     for row in proposal_rows
     for detection in row["detections"]
 )
@@ -594,7 +653,7 @@ else:
         for detection in row["detections"]:
             draw.rectangle(detection["box"], outline="red", width=2)
             draw.text((detection["box"][0], max(0, detection["box"][1] - 14)),
-                      f"{detection['vehicle_type']} {detection['score']:.2f}", fill="red")
+                      f"{detection['class_name']} {detection['score']:.2f}", fill="red")
         axis.imshow(image)
         axis.set_title(f"{row['split']} · {row['camera_id']} · {row['frame_stem']}")
         axis.axis("off")
@@ -612,9 +671,11 @@ display(Markdown(
 
 
 def build_notebook() -> nbformat.NotebookNode:
+    variant = "base"
+    config_source = CONFIG_SOURCE
     cells = [
         nbformat.v4.new_markdown_cell(MARKDOWN),
-        nbformat.v4.new_code_cell(CONFIG_SOURCE),
+        nbformat.v4.new_code_cell(config_source),
         nbformat.v4.new_code_cell(DATA_SOURCE),
         nbformat.v4.new_code_cell(TRAIN_SOURCE),
         nbformat.v4.new_code_cell(PROPOSAL_SOURCE),
@@ -630,19 +691,20 @@ def build_notebook() -> nbformat.NotebookNode:
 
 
 def main() -> None:
+    output_path = OUTPUT_NOTEBOOK_BASE
     notebook = build_notebook()
-    nbformat.write(notebook, OUTPUT_NOTEBOOK)
-    loaded = nbformat.read(OUTPUT_NOTEBOOK, as_version=4)
+    nbformat.write(notebook, output_path)
+    loaded = nbformat.read(output_path, as_version=4)
     nbformat.validate(loaded)
     code_cells = [cell for cell in loaded.cells if cell.cell_type == "code"]
     markdown_cells = [cell for cell in loaded.cells if cell.cell_type == "markdown"]
     if len(code_cells) != EXPECTED_CODE_CELL_COUNT or len(markdown_cells) != EXPECTED_MARKDOWN_CELL_COUNT:
         raise ValueError("struktur notebook NB02d berubah dari kontrak builder")
     for index, cell in enumerate(code_cells):
-        compile(cell.source, f"NB02d cell {index}", "exec")
+        compile(cell.source, f"NB02d base cell {index}", "exec")
         if cell.outputs:
-            raise ValueError(f"output lama tidak boleh tertanam di NB02d, cell {index}")
-    print(f"Notebook NB02d valid: {len(code_cells)} sel kode, sintaks lolos.")
+            raise ValueError(f"output lama tidak boleh tertanam di NB02d base, cell {index}")
+    print(f"{output_path.name} valid: {len(code_cells)} sel kode, sintaks lolos.")
 
 
 if __name__ == "__main__":

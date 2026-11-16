@@ -164,10 +164,16 @@ def main() -> None:
     counting_payload = json.loads(assert_artifact("nb05/counting_summary.json").read_text(encoding="utf-8"))
     if counting_payload.get("counting_unit") != "box_per_frame":
         raise AssertionError("NB05 harus menandai hitungannya sebagai box_per_frame")
+    box_totals = counting_payload["box_totals"]
+    if set(box_totals) != set(BOX_COUNT_CONTRACT):
+        raise AssertionError(
+            f"Kontrak box NB05 berbeda: {sorted(box_totals)} != {sorted(BOX_COUNT_CONTRACT)}"
+        )
+    observed_box_contract = {key: BOX_COUNT_CONTRACT[key] for key in box_totals}
     check_counting_contract(
-        counting_payload["box_totals"],
+        box_totals,
         counting_payload["class_counts"],
-        BOX_COUNT_CONTRACT,
+        observed_box_contract,
         counting_payload["counted_boxes"],
     )
     tracking_payload = json.loads(assert_artifact("nb06/counting_summary.json").read_text(encoding="utf-8"))
@@ -175,7 +181,7 @@ def main() -> None:
         tracking_payload["counting_totals"],
         tracking_payload["event_class_counts"],
         COUNT_CONTRACT,
-        tracking_payload["bbox_counted"],
+        tracking_payload["line_crossings_counted"],
     )
     if tracking_payload["frames_processed"] == 0:
         raise AssertionError("NB06 memproses 0 frame")
@@ -187,7 +193,7 @@ def main() -> None:
         print(f"[smoke] {contract_key}: {contract_value}", flush=True)
     print(f"[smoke] frame dihitung: {counting_payload['frames_counted']}", flush=True)
     print(f"[smoke] box lolos ambang: {counting_payload['counted_boxes']}", flush=True)
-    print("\n[smoke] === bbox event tidak standar (NB06) ===", flush=True)
+    print("\n[smoke] === track tidak standar melintasi garis (NB06) ===", flush=True)
     for contract_key, contract_value in tracking_payload["counting_totals"].items():
         print(f"[smoke] {contract_key}: {contract_value}", flush=True)
     print(
@@ -199,7 +205,7 @@ def main() -> None:
     print(
         f"[smoke] track mentah: {tracking_payload['tracks_total']} · "
         f"fragmen disambung: {tracking_payload['fragments_stitched']} · "
-        f"bbox event: {tracking_payload['bbox_counted']}",
+        f"line crossings: {tracking_payload['line_crossings_counted']}",
         flush=True,
     )
     print("[smoke] SELESAI TANPA ERROR", flush=True)

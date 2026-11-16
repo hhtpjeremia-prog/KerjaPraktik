@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build NB04_train_yolo.ipynb: materialisasi split dan training detector YOLO Mobil/Motor."""
+"""Build NB04_train_yolo.ipynb: materialisasi split dan training detector YOLO lima kelas."""
 
 import sys
 from pathlib import Path
@@ -29,9 +29,9 @@ menyusun ulang gambar+label ke struktur `{train,val,test}` sesuai peta split per
 
 - **Split per kamera**, dibaca dari `split_map.csv` hasil NB02b. Satu kamera mustahil muncul di dua
   split, sehingga tidak ada kebocoran lewat frame yang mirip dari video yang sama.
-- **Semua label adalah gold.** Tidak ada percampuran label pseudo: NB02 hanya memberi lokasi, dan
-  lokasi itu sudah dikoreksi manusia di NB02b. Frame yang tidak direview tidak ikut dataset.
-- **3 kelas detector**: `Mobil`, `Motor`, dan `PantulanCahaya`. Pantulan dilatih sebagai target eksplisit supaya detector dapat mengenalinya; NB06 membuang kelas ini sebelum ByteTrack, overlay, dan counting kendaraan.
+- **Train dapat berisi gold dan pseudo-label FM base.** Pseudo-label hanya ditambahkan ke train;
+  validation/test berasal dari export berlabel manusia/GT. Manifest dataset mencatat provenance.
+- **5 kelas detector**, sama persis dengan anotasi: `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`, `PantulanCahaya`. Status review `BelumDitentukan` bukan kelas model dan ditolak saat ekspor.
 - **Gambar di-hardlink** (fallback copy). Menghapus folder dataset tidak menghapus crop NB02.
 - **Guard**: training ditolak bila split `val` terlalu kecil, karena metrik dari val yang nyaris
   kosong hanya menyesatkan.
@@ -65,9 +65,8 @@ from IPython.display import Markdown, display
 
 from pipeline_common import TRAINING_CLASS_NAMES
 
-RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
-    raise RuntimeError("Set RISET_PROJECT_ROOT ke root proyek atau jalankan notebook dari root proyek.")
+from pipeline_common import resolve_project_root
+RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT_ROOT = RISET_ROOT / "output"
 SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"
 DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
@@ -77,6 +76,7 @@ SOURCE_IMAGE_DIR = ANNOTATION_ROOT / "yolo" / "images"
 SOURCE_LABEL_DIR = ANNOTATION_ROOT / "yolo" / "labels"
 SPLIT_MAP_PATH = ANNOTATION_ROOT / "yolo" / "split_map.csv"
 YOLO_EXPORT_MANIFEST_PATH = ANNOTATION_ROOT / "yolo" / "export_manifest.json"
+NB02D_PROPOSAL_MANIFEST_PATH = OUTPUT_ROOT / "nb02d_fiveclass" / "base" / "proposal_manifest.json"
 
 NB04_ROOT = DATA_ROOT / "nb04"
 DATASET_ROOT = NB04_ROOT / "dataset"
@@ -127,6 +127,11 @@ SPLIT_SOURCE = '''def read_split_map(split_map_path: Path) -> pd.DataFrame:
     export_manifest = json.loads(YOLO_EXPORT_MANIFEST_PATH.read_text(encoding="utf-8"))
     if export_manifest.get("status") != "complete":
         raise ValueError("Export YOLO NB02b belum berstatus complete; jalankan ulang export NB02b sebelum NB04.")
+    if export_manifest.get("class_names") != TRAINING_CLASS_NAMES:
+        raise ValueError(
+            "Taksonomi export YOLO NB02b tidak cocok dengan lima kelas NB04; "
+            "refresh export dari store NB02b sebelum training."
+        )
     split_frame = pd.read_csv(split_map_path, dtype=str)
     if tuple(split_frame.columns) != SPLIT_MAP_FIELDS:
         raise ValueError(f"kolom split_map.csv {tuple(split_frame.columns)} != {SPLIT_MAP_FIELDS}")
@@ -211,6 +216,7 @@ for split_name in SPLIT_ORDER:
         stale_path.unlink()
 
 dataset_rows = []
+gold_frame_stems = set(split_map_frame["frame_stem"])
 for split_row in split_map_frame.itertuples(index=False):
     destination_image_path = DATASET_IMAGE_DIR / split_row.split / f"{split_row.frame_stem}.png"
     destination_label_path = DATASET_LABEL_DIR / split_row.split / f"{split_row.frame_stem}.txt"
@@ -220,11 +226,57 @@ for split_row in split_map_frame.itertuples(index=False):
         "frame_stem": split_row.frame_stem,
         "camera_id": split_row.camera_id,
         "split": split_row.split,
+        "label_source": "human_gold",
         "link_mode": link_mode,
     })
 
+# Grounding DINO pseudo-labels are appended to TRAIN only. Validation/test remain human gold.
+pseudo_frame_count = 0
+pseudo_box_count = 0
+if NB02D_PROPOSAL_MANIFEST_PATH.exists():
+    proposal_payload = json.loads(NB02D_PROPOSAL_MANIFEST_PATH.read_text(encoding="utf-8"))
+    if proposal_payload.get("status") != "complete":
+        raise ValueError("Proposal NB02d belum complete; dataset menolak pseudo-label parsial.")
+    for proposal in proposal_payload.get("frames", []):
+        if proposal.get("split") != "train" or proposal["frame_stem"] in gold_frame_stems:
+            continue
+        frame_stem = proposal["frame_stem"]
+        source_image = Path(proposal["image_path"])
+        if not source_image.is_absolute():
+            source_image = RISET_ROOT / source_image
+        width, height = int(proposal["image_width"]), int(proposal["image_height"])
+        if not source_image.exists() or width <= 0 or height <= 0:
+            raise FileNotFoundError(f"Citra pseudo-label hilang/invalid untuk {frame_stem}: {source_image}")
+        class_lines = []
+        for detection in proposal.get("detections", []):
+            class_name = detection.get("class_name")
+            if class_name not in CLASS_INDEX_BY_NAME:
+                raise ValueError(f"Kelas pseudo-label di luar vocabulary lima kelas: {frame_stem}: {class_name}")
+            x1, y1, x2, y2 = map(float, detection["box"])
+            x1, x2 = max(0.0, min(x1, width)), max(0.0, min(x2, width))
+            y1, y2 = max(0.0, min(y1, height)), max(0.0, min(y2, height))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            cx, cy = (x1 + x2) / (2 * width), (y1 + y2) / (2 * height)
+            bw, bh = (x2 - x1) / width, (y2 - y1) / height
+            class_lines.append(f"{CLASS_INDEX_BY_NAME[class_name]} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+        destination_image = DATASET_IMAGE_DIR / "train" / f"{frame_stem}.png"
+        destination_label = DATASET_LABEL_DIR / "train" / f"{frame_stem}.txt"
+        link_mode = link_or_copy(source_image, destination_image)
+        destination_label.write_text("\\n".join(class_lines) + ("\\n" if class_lines else ""), encoding="utf-8")
+        dataset_rows.append({
+            "frame_stem": frame_stem, "camera_id": proposal["camera_id"], "split": "train",
+            "label_source": "grounding_dino_pseudo", "link_mode": link_mode,
+        })
+        pseudo_frame_count += 1
+        pseudo_box_count += len(class_lines)
+
 dataset_frame = pd.DataFrame(dataset_rows)
 write_data_yaml(DATASET_ROOT, DATA_YAML_PATH)
+display(Markdown(
+    f"Pseudo-label FM yang ditambahkan ke **train saja**: {pseudo_frame_count} frame / {pseudo_box_count} box. "
+    "Validation tetap hanya gold reviewed; test tidak dimasukkan ke training."
+))
 
 display(Markdown(
     f"Dataset dimaterialisasi: **{len(dataset_frame)} frame** · "
@@ -346,6 +398,8 @@ training_payload = {
     "split_source": str(SPLIT_MAP_PATH),
     "data_yaml": str(DATA_YAML_PATH),
     "dataset_frames": int(len(dataset_frame)),
+    "pseudo_train_frames": pseudo_frame_count,
+    "pseudo_train_boxes": pseudo_box_count,
     "arguments": training_arguments,
     "best_weights": str(best_weights_path),
     "best_weights_exists": best_weights_path.exists(),
@@ -422,10 +476,10 @@ Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · dataset: `{DATASET_ROOT}` · b
 **Metrik val** — mAP50 {val_overall["mAP50"]:.3f} | mAP50-95 {val_overall["mAP50-95"]:.3f} | precision {val_overall["precision"]:.3f} | recall {val_overall["recall"]:.3f}
 
 **Yang harus ditulis di laporan**
-- Semua label adalah gold hasil NB02b; tidak ada label pseudo yang ikut dilatih.
+- Train memuat gold NB02b dan, bila manifest base tersedia, tambahan pseudo-label FM. Val/test tetap gold.
 - Split `test` tidak punya gold, jadi tidak ada metrik akurasi di sana.
   NB05 memakai kamera test hanya untuk **menghitung**, bukan mengukur akurasi.
-- `PantulanCahaya` adalah target detector eksplisit, tetapi bukan kendaraan hitungan dan tidak diteruskan ke ByteTrack/overlay NB06.
+- `PantulanCahaya` tetap dilatih sebagai kelas detector untuk menekan false positive. NB06 menyaringnya dari hitungan kendaraan dan overlay event.
 """
 ))'''
 

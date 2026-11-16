@@ -25,7 +25,6 @@ from dashboard.data import (
 from pipeline_common import CLASS_NAMES
 
 PAGE_TITLE = "Hasil Hitung Kendaraan — CCTV Kab. Bogor"
-RATIO_DECIMAL_PLACES = 1
 
 CLASS_LABELS = {
     "MobilStandar": "Mobil standar",
@@ -82,7 +81,7 @@ def main() -> None:
 
 def render_header(summary: dict | None) -> None:
     st.title(PAGE_TITLE)
-    unit_note = "Counting utama = jumlah bbox tidak standar yang terlihat pada frame aktif; track ID hanya untuk audit."
+    unit_note = "Counting utama = kendaraan tidak standar yang melintasi counting line; setiap vehicle track dihitung sekali per video."
     if summary is None:
         st.caption(unit_note)
         return
@@ -90,7 +89,7 @@ def render_header(summary: dict | None) -> None:
     st.caption(
         f"{unit_note} Split dihitung: {counted_splits}. "
         f"Filter minimal {format_count(summary.get('min_track_hits'))} kemunculan hanya berlaku "
-        "untuk audit kendaraan unik dan galeri event; bukan hitungan bbox per frame."
+        "untuk menyaring track singkat dan audit temporal. Bbox-per-frame tersedia sebagai metrik pendamping."
     )
 
 
@@ -124,13 +123,13 @@ def render_totals(summary: dict) -> None:
     counting_totals = summary["counting_totals"]
     total_columns = st.columns(4)
     total_columns[0].metric(
-        "BBox tidak standar", format_count(summary.get("bbox_counted")), border=True
+        "Track tidak standar crossing", format_count(summary.get("line_crossings_counted")), border=True
     )
     total_columns[1].metric(
-        "BBox mobil", format_count(counting_totals.get("jumlah_bbox_mobil_tidak_standar")), border=True
+        "Mobil tidak standar crossing", format_count(counting_totals.get("jumlah_kendaraan_mobil_tidak_standar_melintasi_garis")), border=True
     )
     total_columns[2].metric(
-        "BBox motor", format_count(counting_totals.get("jumlah_bbox_motor_tidak_standar")), border=True
+        "Motor tidak standar crossing", format_count(counting_totals.get("jumlah_kendaraan_motor_tidak_standar_melintasi_garis")), border=True
     )
     total_columns[3].metric(
         "Video diproses", format_count(summary.get("videos_counted")), border=True
@@ -185,7 +184,7 @@ def render_playback(snapshot: CountingSnapshot) -> None:
     )
     fps = float(video_row["fps"])
     st.caption(f"Posisi: {selected_frame / fps:.1f} detik dari {float(video_row['duration_seconds']):.1f} detik")
-    timeline_frame_column = "counting_frame" if "counting_frame" in video_timeline.columns else "frame_index"
+    timeline_frame_column = "crossing_frame" if "crossing_frame" in video_timeline.columns else "frame_index"
     visible_timeline = video_timeline[video_timeline[timeline_frame_column] == selected_frame]
     video_column, count_column = st.columns([1.55, 1], gap="large")
     with video_column:
@@ -195,21 +194,14 @@ def render_playback(snapshot: CountingSnapshot) -> None:
         else:
             st.warning(f"File overlay belum ditemukan: `{video_path}`")
     with count_column:
-        st.markdown("#### Counting aktif")
-        count_columns = st.columns(2)
-        count_columns[0].metric("Kendaraan", format_count(len(visible_timeline)))
-        count_columns[1].metric(
-            "BBox mobil", format_count(int(visible_timeline["class_name"].str.startswith("Mobil").sum()))
-        )
-    event_groups = {
-        "Tidak standar mobil": {"MobilTidakStandar"},
-        "Tidak standar motor": {"MotorTidakStandar"},
-    }
-    with count_column:
-        count_columns = st.columns(2)
-        for column, (label, classes) in zip(count_columns, event_groups.items()):
-            value = int(visible_timeline["class_name"].isin(classes).sum())
-            column.metric(label, format_count(value))
+        st.markdown("#### Kendaraan melintasi garis pada frame ini")
+        count_columns = st.columns(3)
+        count_columns[0].metric("Total crossing", format_count(len(visible_timeline)))
+        count_columns[1].metric("Mobil tidak standar", format_count(int(visible_timeline["class_name"].eq("MobilTidakStandar").sum())))
+        count_columns[2].metric("Motor tidak standar", format_count(int(visible_timeline["class_name"].eq("MotorTidakStandar").sum())))
+        if "crossing_direction" in visible_timeline:
+            directions = visible_timeline["crossing_direction"].value_counts().to_dict()
+            st.caption(f"Arah: turun {directions.get('down', 0)} · naik {directions.get('up', 0)}")
         st.markdown("**Arti warna bbox dan tipe kendaraan**")
         render_class_legend()
     class_counts = pd.Series(
@@ -218,11 +210,11 @@ def render_playback(snapshot: CountingSnapshot) -> None:
             "Motor tidak standar": int(visible_timeline["class_name"].isin({"MotorTidakStandar"}).sum()),
         }
     )
-    st.bar_chart(pd.DataFrame({"Jumlah bbox aktif": class_counts}), height=220)
+    st.bar_chart(pd.DataFrame({"Track melintasi garis": class_counts}), height=220)
     if not visible_timeline.empty:
         st.dataframe(
             visible_timeline.sort_values(timeline_frame_column)[
-                [column for column in ("bbox_id", "track_id", "class_name", timeline_frame_column, "score") if column in visible_timeline.columns]
+                [column for column in ("vehicle_id", "track_id", "class_name", timeline_frame_column, "crossing_direction", "score") if column in visible_timeline.columns]
             ],
             hide_index=True,
             width="stretch",
@@ -473,7 +465,7 @@ def render_camera_section(snapshot: CountingSnapshot) -> None:
         return
     with st.expander("Rincian per kelas untuk tiap titik CCTV"):
         st.dataframe(class_display_frame(snapshot.camera_table), hide_index=True, width="stretch")
-        st.caption("Rincian kelas adalah bbox deteksi per frame setelah ambang confidence; hitungan event utama hanya mengambil kelas tidak standar.")
+        st.caption("Rincian kelas adalah bbox deteksi per frame; angka utama adalah track tidak standar yang melintasi garis.")
 
 
 def camera_display_frame(status_frame: pd.DataFrame) -> pd.DataFrame:
@@ -483,9 +475,9 @@ def camera_display_frame(status_frame: pd.DataFrame) -> pd.DataFrame:
             "Split": status_frame["split"],
             "Status": status_frame["status"],
             "Video": formatted_column(status_frame, "videos_counted"),
-            "BBox tidak standar": formatted_column(status_frame, "bbox_counted"),
-            "BBox mobil tidak standar": formatted_column(status_frame, "jumlah_bbox_mobil_tidak_standar"),
-            "BBox motor tidak standar": formatted_column(status_frame, "jumlah_bbox_motor_tidak_standar"),
+            "Kendaraan crossing": formatted_column(status_frame, "crossings_counted"),
+            "Mobil tidak standar crossing": formatted_column(status_frame, "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis"),
+            "Motor tidak standar crossing": formatted_column(status_frame, "jumlah_kendaraan_motor_tidak_standar_melintasi_garis"),
         }
     )
 
@@ -504,39 +496,33 @@ def formatted_column(frame: pd.DataFrame, column_name: str) -> list[str]:
     return [format_count(value) for value in frame[column_name]]
 
 
-def ratio_label(value: float | None) -> str:
-    if value is None:
-        return NOT_AVAILABLE_LABEL
-    return f"{float(value):.{RATIO_DECIMAL_PLACES}f}x"
-
-
 def render_contract_section(summary: dict) -> None:
     counting_totals = summary["counting_totals"]
-    st.subheader("Counting bbox tidak standar")
-    st.caption("Satuan angka ini adalah bbox per frame, bukan kendaraan unik sepanjang video.")
+    st.subheader("Kendaraan tidak standar melintasi garis")
+    st.caption("Satu track dihitung sekali saat center bbox melewati garis hitung; arah crossing ikut dicatat.")
     st.dataframe(
         pd.DataFrame({
-            "Keluaran": ["BBox mobil tidak standar", "BBox motor tidak standar"],
+            "Keluaran": ["Mobil tidak standar", "Motor tidak standar"],
             "Jumlah": [
-                format_count(counting_totals.get("jumlah_bbox_mobil_tidak_standar", 0)),
-                format_count(counting_totals.get("jumlah_bbox_motor_tidak_standar", 0)),
+                format_count(counting_totals.get("jumlah_kendaraan_mobil_tidak_standar_melintasi_garis", 0)),
+                format_count(counting_totals.get("jumlah_kendaraan_motor_tidak_standar_melintasi_garis", 0)),
             ],
         }),
         hide_index=True,
         width="stretch",
     )
 def render_class_section(summary: dict) -> None:
-    st.subheader("BBox aktif per tipe kendaraan")
+    st.subheader("Track tidak standar melintasi garis per tipe kendaraan")
     class_counts = summary.get("event_class_counts", {})
     class_frame = pd.DataFrame(
-        {"Jumlah bbox": [
+        {"Jumlah crossing": [
             sum(int(class_counts.get(class_name, 0)) for class_name in ("MobilTidakStandar",)),
             sum(int(class_counts.get(class_name, 0)) for class_name in ("MotorTidakStandar",)),
         ]},
         index=["Mobil tidak standar", "Motor tidak standar"],
     )
     st.bar_chart(class_frame, height=280)
-    st.caption("Kendaraan standar dan pantulan tidak masuk counting utama.")
+    st.caption("Satu track hanya dihitung sekali per video. Kendaraan standar dan pantulan tidak masuk counting utama.")
 
 
 def render_quality_section(summary: dict) -> None:
@@ -549,7 +535,8 @@ def render_quality_section(summary: dict) -> None:
             ("Track mentah ByteTrack", format_count(summary.get("tracks_total"))),
             ("Fragmen disambung", format_count(summary.get("fragments_stitched"))),
             ("Kendaraan setelah penyambungan", format_count(summary.get("vehicles_total"))),
-            ("Rasio duplikasi vs hitung per frame", ratio_label(summary.get("duplication_factor_vs_per_frame"))),
+            ("Crossing line utama", format_count(summary.get("line_crossings_counted"))),
+            ("BBox event per frame (audit)", format_count(summary.get("bbox_per_frame_nonstandard_detections"))),
             ("Video ditemukan", format_count(summary.get("videos_found"))),
         ]
         st.dataframe(

@@ -1,6 +1,8 @@
-# Rujukan Ilmiah untuk Infrastruktur Computer Vision
+﻿# Rujukan Ilmiah untuk Infrastruktur Computer Vision
 
-> **Kecocokan implementasi (12 November 2026).** Gunakan README untuk kontrak model/ROI aktif. Rujukan semi-supervised, Grad-CAM, dan metode lain di bawah adalah landasan atau kemungkinan pengembangan kecuali dinyatakan telah diimplementasikan. Model classifier aktif memakai CNN ResNet18 + fitur HSV numerik; evaluasi test hanya sah saat holdout GT direview.
+> **Kontrak pipeline aktif (2026-11-16):** lima kelas seragam di FM/YOLO/CNN; continued fine-tune dibatalkan. FM pseudo-label hanya tambahan train. NB02e menyediakan mask SAM2 untuk fitur CNN; NB04b menggabungkan fitur RGB, 77 fitur bbox+mask dan cluster e-means train-only. Ini kontrak source yang akan aktif setelah pipeline dijalankan ulang; e-means belum dievaluasi sebagai peningkat akurasi.
+
+> **Kecocokan implementasi (16 November 2026).** Gunakan README untuk kontrak model/ROI aktif. ResNet18 menggabungkan crop RGB, fitur HSV bbox+foreground mask SAM2, geometri mask, dan e-means train-only. Rujukan semi-supervised, Grad-CAM, dan metode lain di bawah tetap landasan/pengembangan kecuali dinyatakan telah diimplementasikan. Evaluasi test hanya sah saat holdout GT direview.
 
 
 Daftar ini menghubungkan tahapan pipeline NewStyle dengan paper primer, prosiding, dokumentasi resmi, dan standar yang relevan. Tujuannya sebagai bahan diskusi dengan dosen pembimbing dan landasan penulisan laporan.
@@ -50,7 +52,7 @@ Relevansi: anotasi objek per-instance, bbox, dan benchmark deteksi. COCO JSON ad
 
 ### 3. YOLO
 
-Redmon, J., Divvala, S., Girshick, R., dan Farhadi, A. (2016). You Only Look Once: Unified, Real-Time Object Detection. CVPR 2016, 779–788.
+Redmon, J., Divvala, S., Girshick, R., dan Farhadi, A. (2016). You Only Look Once: Unified, Real-Time Object Detection. CVPR 2016, 779â€“788.
 
 Relevansi: paper fondasional untuk keluarga metode YOLO dan deteksi bbox satu tahap. Ini bukan paper arsitektur YOLO11 yang persis digunakan project.
 
@@ -86,7 +88,7 @@ Relevansi: rujukan umum untuk augmentasi computer vision. Paper ini tidak berart
 
 ### 6. Ketimpangan kelas
 
-Lin, T.-Y., Goyal, P., Girshick, R., He, K., dan Dollár, P. (2017). Focal Loss for Dense Object Detection. ICCV 2017.
+Lin, T.-Y., Goyal, P., Girshick, R., He, K., dan DollÃ¡r, P. (2017). Focal Loss for Dense Object Detection. ICCV 2017.
 
 Relevansi: menjelaskan masalah ketimpangan foreground/background pada object detection. Project memakai weighted binary cross-entropy untuk classifier; Focal Loss adalah metode berbeda dan hanya menjadi rujukan konseptual masalah imbalance.
 
@@ -112,7 +114,7 @@ Relevansi: sistem deteksi dan tracking kendaraan malam pada kamera surveillance 
 
 ### 8. Batas klaim HSV/RGB terhadap intensitas fisik cahaya
 
-Commission Internationale de l’Éclairage (CIE). (2016). CIE Technical Note 004:2016 — The Use of Terms and Units in Photometry.
+Commission Internationale de lâ€™Ã‰clairage (CIE). (2016). CIE Technical Note 004:2016 â€” The Use of Terms and Units in Photometry.
 
 Relevansi: sumber standar untuk membedakan besaran fotometri dan satuannya. HSV, brightness ratio, dan histogram warna dari video biasa tidak dapat dilaporkan sebagai lux/candela tanpa instrumen, kalibrasi fotometrik/radiometrik, dan geometri pengukuran yang sesuai.
 
@@ -128,7 +130,7 @@ Relevansi: taksonomi fusion pada level data, fitur, dan keputusan.
 
 - [DOI ACM](https://doi.org/10.1145/3649447)
 
-Pada project, embedding citra CNN digabung dengan fitur HSV/statistik piksel di classifier. Kemudian NB06 memasangkan prediksi kondisi classifier dengan bbox/jenis kendaraan dari YOLO. ByteTrack menghubungkan track ID antar-frame. Ini bukan training YOLO dan CNN secara bersama.
+Pada project, embedding citra CNN digabung dengan photometry bbox dan foreground mask, geometri mask, dan cluster e-means. NB06 memasangkan prediksi kondisi classifier dengan bbox/jenis kendaraan dari YOLO. ByteTrack menghubungkan track ID antar-frame. Ini bukan training YOLO dan CNN secara bersama.
 
 ### 10. ByteTrack
 
@@ -155,7 +157,7 @@ Gunakan bersama evaluator resmi COCO untuk definisi AP pada IoU 0.50:0.95, AP@0.
 
 - [Definisi metrik evaluasi COCO](https://cocodataset.github.io/dataset/detection-eval.htm)
 
-Everingham, M., Van Gool, L., Williams, C. K. I., Winn, J., dan Zisserman, A. (2010). The Pascal Visual Object Classes (VOC) Challenge. International Journal of Computer Vision, 88, 303–338.
+Everingham, M., Van Gool, L., Williams, C. K. I., Winn, J., dan Zisserman, A. (2010). The Pascal Visual Object Classes (VOC) Challenge. International Journal of Computer Vision, 88, 303â€“338.
 
 Relevansi: benchmark dan prosedur evaluasi deteksi; AP pada IoU 0.50 sering dikaitkan dengan protokol VOC.
 
@@ -163,13 +165,13 @@ Relevansi: benchmark dan prosedur evaluasi deteksi; AP pada IoU 0.50 sering dika
 
 ### 12. MSE/RMSE probabilitas dan kalibrasi confidence
 
-Brier, G. W. (1950). Verification of Forecasts Expressed in Terms of Probability. Monthly Weather Review, 78(1), 1–3.
+Brier, G. W. (1950). Verification of Forecasts Expressed in Terms of Probability. Monthly Weather Review, 78(1), 1â€“3.
 
 Relevansi: dasar Brier score, yaitu mean squared error antara probabilitas prediksi dan label biner. Pada classifier project, MSE/RMSE melengkapi precision/recall/F1; keduanya bukan metrik bbox.
 
 - [American Meteorological Society, DOI](https://doi.org/10.1175/1520-0493%281950%29078%3C0001%3AVOFEIT%3E2.0.CO%3B2)
 
-Guo, C., Pleiss, G., Sun, Y., dan Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. Proceedings of the 34th International Conference on Machine Learning, PMLR 70, 1321–1330.
+Guo, C., Pleiss, G., Sun, Y., dan Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. Proceedings of the 34th International Conference on Machine Learning, PMLR 70, 1321â€“1330.
 
 Relevansi: skor confidence jaringan saraf belum tentu setara dengan probabilitas prediksi benar yang terkalibrasi.
 
@@ -177,7 +179,7 @@ Relevansi: skor confidence jaringan saraf belum tentu setara dengan probabilitas
 
 ### 13. Metrik tracking
 
-Luiten, J., Osep, A., Dendorfer, P., et al. (2021). HOTA: A Higher Order Metric for Evaluating Multi-object Tracking. International Journal of Computer Vision, 129, 548–578.
+Luiten, J., Osep, A., Dendorfer, P., et al. (2021). HOTA: A Higher Order Metric for Evaluating Multi-object Tracking. International Journal of Computer Vision, 129, 548â€“578.
 
 Relevansi: HOTA mengevaluasi deteksi, asosiasi identitas, dan lokalisasi.
 
@@ -188,7 +190,7 @@ Batas pada project: HOTA/IDF1 membutuhkan GT track ID per frame. Anotasi bbox da
 
 ## F. Kamera berbeda dan validitas split
 
-Lu, Y., Zhong, Z., dan Shu, Y. (2023). Multi-View Domain Adaptive Object Detection on Camera Networks. Proceedings of the AAAI Conference on Artificial Intelligence, 37(7), 8966–8974.
+Lu, Y., Zhong, Z., dan Shu, Y. (2023). Multi-View Domain Adaptive Object Detection on Camera Networks. Proceedings of the AAAI Conference on Artificial Intelligence, 37(7), 8966â€“8974.
 
 Relevansi: perbedaan domain antar kamera dan adaptasi detektor di camera networks.
 
@@ -201,18 +203,18 @@ Relevansi: prinsip untuk mencegah data test memengaruhi training atau pemilihan 
 - [Artikel Open Access](https://pmc.ncbi.nlm.nih.gov/articles/PMC10499856/)
 - [DOI](https://doi.org/10.1016/j.patter.2023.100804)
 
-## G. Semi-supervised learning — rujukan pengembangan, bukan deskripsi training saat ini
+## G. Semi-supervised learning â€” rujukan pengembangan, bukan deskripsi training saat ini
 
-Xu, M., Zhang, Z., Hu, H., et al. (2021). End-to-End Semi-Supervised Object Detection with Soft Teacher. ICCV 2021, 3060–3069.
+Xu, M., Zhang, Z., Hu, H., et al. (2021). End-to-End Semi-Supervised Object Detection with Soft Teacher. ICCV 2021, 3060â€“3069.
 
-Relevansi: teacher–student dan pseudo-label dengan pembobotan confidence untuk melatih detektor memakai data berlabel dan tidak berlabel.
+Relevansi: teacherâ€“student dan pseudo-label dengan pembobotan confidence untuk melatih detektor memakai data berlabel dan tidak berlabel.
 
 - [CVF Open Access](https://openaccess.thecvf.com/content/ICCV2021/html/Xu_End-to-End_Semi-Supervised_Object_Detection_With_Soft_Teacher_ICCV_2021_paper.html)
 - [DOI IEEE](https://doi.org/10.1109/ICCV48922.2021.00305)
 
 Liu, Y.-C., Ma, C.-Y., He, Z., et al. (2021). Unbiased Teacher for Semi-Supervised Object Detection. ICCV 2021.
 
-Relevansi: membahas bias pseudo-label dan framework teacher–student dalam semi-supervised detection.
+Relevansi: membahas bias pseudo-label dan framework teacherâ€“student dalam semi-supervised detection.
 
 - [arXiv](https://arxiv.org/abs/2102.09480)
 - [Repository implementasi](https://github.com/facebookresearch/unbiased-teacher)
@@ -221,9 +223,17 @@ Relevansi: membahas bias pseudo-label dan framework teacher–student dalam semi
 
 ## Catatan ketahanan terhadap overfitting
 
-Referensi arsitektur/augmentasi tidak membuktikan bahwa model project bebas overfitting. Pada trainer classifier saat ini terdapat weighted BCE, pretrained ResNet18, augmentasi flip dan ColorJitter, dropout, weight decay, warm-up head, serta pemilihan checkpoint berdasarkan validation loss. Namun belum ada early stopping berbasis patience. Semua itu adalah mitigasi, bukan bukti performa.
+Referensi arsitektur/augmentasi tidak membuktikan bahwa model project bebas overfitting. Pada trainer classifier terdapat weighted CrossEntropy, pretrained ResNet18, augmentasi flip dan ColorJitter, dropout, weight decay, warm-up head, serta pemilihan checkpoint berdasarkan validation loss. Semua itu adalah mitigasi, bukan bukti performa. E-means tidak diawasi label dan hanya menambah representasi cluster; efektivitasnya harus dibandingkan lewat validation.
 
 Variasi visual dalam kelas TidakStandar berbeda dari class imbalance. Weighted BCE menangani perbedaan jumlah contoh; ia tidak otomatis membuat variasi kondisi kamera, jenis lampu, jarak, blur, pantulan, atau exposure terwakili. Bukti overfitting harus dinilai dari kurva train-vs-val, metrik per kelas/kamera, hasil holdout test, serta pemeriksaan contoh false positive/false negative.
+
+## E-means yang dipakai sebagai fitur cluster
+
+Pipeline memakai implementasi PyTorch resmi Meta FAIR e-means (Faiss v1.16.0 contrib), assignment backend native, dan centroid dilatih hanya pada vektor fitur split train. Ini tidak berarti package Faiss GPU dipasang. Script `builders/install_emeans.ps1` mengambil source dan lisensi MIT dari repositori resmi; provenance tercatat di script.
+
+- Bessa et al. (2026), *E-Means: Scaling Laws for Mini-Batch K-Means*, [arXiv:2611.09501](https://arxiv.org/abs/2611.09501).
+- [Source resmi PyTorch e-means](https://github.com/facebookresearch/faiss/blob/v1.16.0/contrib/e_means/e_means_torch.py).
+- [Dokumentasi resmi integrasi/benchmark Faiss](https://github.com/facebookresearch/faiss/blob/v1.16.0/benchs/e_means/README.md).
 
 ## Catatan lisensi kode, bobot, dan data
 
@@ -236,11 +246,11 @@ Untuk setiap aset, catat secara terpisah: sitasi paper/model, lisensi kode, lise
 
 ## Bacaan prioritas untuk diskusi
 
-1. Grounding DINO — kandidat deteksi dari prompt.
-2. YOLO original dan dokumentasi YOLO11 — bedakan metode umum dengan implementasi aktual.
-3. ResNet — backbone classifier.
-4. ByteTrack — asosiasi bbox dan ID antar-frame.
-5. COCO evaluator — makna mAP@50 dan mAP@50:95.
-6. Paper CCTV malam dari Expert Systems with Applications — kedekatan domain.
-7. CIE Technical Note — batas klaim fitur piksel dibanding pengukuran fotometri.
-8. Soft Teacher dan Unbiased Teacher — hanya jika semi-supervised training akan benar-benar diuji.\n
+1. Grounding DINO â€” kandidat deteksi dari prompt.
+2. YOLO original dan dokumentasi YOLO11 â€” bedakan metode umum dengan implementasi aktual.
+3. ResNet â€” backbone classifier.
+4. ByteTrack â€” asosiasi bbox dan ID antar-frame.
+5. COCO evaluator â€” makna mAP@50 dan mAP@50:95.
+6. Paper CCTV malam dari Expert Systems with Applications â€” kedekatan domain.
+7. CIE Technical Note â€” batas klaim fitur piksel dibanding pengukuran fotometri.
+8. Soft Teacher dan Unbiased Teacher â€” hanya jika semi-supervised training akan benar-benar diuji.\n

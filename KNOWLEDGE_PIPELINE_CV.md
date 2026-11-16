@@ -1,6 +1,6 @@
 # Pengetahuan Pipeline CV — Hasil Ekstraksi `Computer-Vision/`
 
-> **Status penerapan (13 November 2026).** Arsip kursus yang diringkas di bawah adalah sumber ide, bukan spesifikasi pipeline. YOLO/FM memakai kelas Mobil, Motor, PantulanCahaya; CNN memakai Standar, TidakStandar, PantulanCahaya. Pantulan dipelajari untuk menekan false positive, lalu disaring sebelum ByteTrack/overlay/counting. Fitur HSV adalah proksi visual, bukan fotometri terkalibrasi. Hitungan resmi tetap bbox per frame.
+> **Status aktif (16 November 2026):** lima kelas seragam di anotasi/FM/YOLO/CNN; hanya fine-tune base. Continued dibatalkan. NB02e menghasilkan mask SAM2 untuk fitur CNN dan NB06. NB04b menggabungkan RGB, 77 fitur bbox+mask, serta one-hot e-means; scaler dan centroid fit hanya pada train. Pseudo-label hanya tambahan train, bukan gold validation/test. Fitur HSV/luminance adalah proksi, bukan fotometri terkalibrasi; e-means fitur eksperimental tanpa jaminan peningkatan akurasi.
 
 
 > Sumber: `C:\Users\Jeremmy\LocalProjects\Python_Things\Computer-Vision`

@@ -30,7 +30,7 @@ def build_summary() -> dict:
         "smoke_mode": False,
         "counted_splits": ["test"],
         "min_track_hits": 3,
-        "bbox_counted": 5,
+        "line_crossings_counted": 5,
         "videos_counted": 2,
         "videos_found": 2,
         "frames_processed": 1840,
@@ -54,7 +54,7 @@ def build_per_video_frame() -> pd.DataFrame:
         ("bogor-kab-bappenda2", "video_alpha", 0),
         ("bogor-kab-pdam2", "video_beta", 3),
     ):
-        row = {"video_stem": video_stem, "camera_id": camera_id, "bbox_counted": 4 + offset}
+        row = {"video_stem": video_stem, "camera_id": camera_id, "crossings_counted": 4 + offset}
         for class_index, class_name in enumerate(CLASS_NAMES):
             row[class_name] = 1 if class_index % 3 == 0 else 0
         for key, classes in COUNT_CONTRACT.items():
@@ -95,7 +95,13 @@ def main() -> None:
         assert not ready_test.exception, [item.value for item in ready_test.exception]
         assert len(ready_test.warning) == 0, [item.value for item in ready_test.warning]
         metric_labels = {item.label for item in ready_test.metric}
-        assert {"BBox tidak standar", "BBox mobil", "BBox motor"}.issubset(metric_labels), metric_labels
+        expected_metrics = {
+            "Track tidak standar crossing",
+            "Mobil tidak standar crossing",
+            "Motor tidak standar crossing",
+            "Video diproses",
+        }
+        assert expected_metrics.issubset(metric_labels), metric_labels
         metric_values = [item.value for item in ready_test.metric]
         camera_frames = [item.value for item in ready_test.dataframe if {"Titik CCTV", "Status"}.issubset(item.value.columns)]
         assert camera_frames, "tabel status titik CCTV tidak dirender"
@@ -103,13 +109,18 @@ def main() -> None:
         print(f"[check] ready  metrics={metric_values}")
         print(f"[check] ready  cameras={camera_frame['Titik CCTV'].tolist()}")
         print(f"[check] ready  status={camera_frame['Status'].tolist()}")
-        measured_columns = [
-            column
-            for column in ("BBox tidak standar", "BBox mobil tidak standar", "BBox motor tidak standar")
-            if column in camera_frame.columns
+        camera_columns = {
+            "Split", "Status", "Kendaraan crossing",
+            "Mobil tidak standar crossing", "Motor tidak standar crossing",
+        }
+        assert camera_columns.issubset(camera_frame.columns), camera_frame.columns.tolist()
+        class_columns = {"Mobil standar", "Mobil tidak standar", "Motor standar", "Motor tidak standar", "Pantulan cahaya"}
+        class_frames = [
+            item.value for item in ready_test.dataframe
+            if "Titik CCTV" in item.value.columns and class_columns.issubset(item.value.columns)
         ]
-        assert measured_columns, camera_frame.columns.tolist()
-        print(f"[check] ready  measured={camera_frame[measured_columns].to_dict('records')}")
+        assert class_frames, [item.value.columns.tolist() for item in ready_test.dataframe]
+        print(f"[check] ready  per-class={class_frames[0][sorted(class_columns)].to_dict('records')}")
 
         partial_root = temporary_root / "partial_nb06"
         partial_root.mkdir(parents=True, exist_ok=True)

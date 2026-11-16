@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""Build NB06_tracking_count.ipynb: hitung bbox tidak standar per frame di dalam ROI."""
+﻿#!/usr/bin/env python3
+"""Build NB06_tracking_count.ipynb: count event kendaraan tidak standar saat track melintasi garis."""
 
 import sys
 from pathlib import Path
@@ -17,13 +17,14 @@ OUTPUT_NOTEBOOK = PROJECT_ROOT / "NB06_tracking_count.ipynb"
 EXPECTED_CODE_CELL_COUNT = 6
 EXPECTED_MARKDOWN_CELL_COUNT = 1
 
-NAVBAR_MARKDOWN = """# NB06 — Hitung Bbox Tidak Standar per Frame
+NAVBAR_MARKDOWN = """# NB06 â€” Hitung Crossing Kendaraan Tidak Standar
 
 NB05 menghitung **box per frame sampel**, sehingga satu kendaraan bisa terhitung berkali-kali.
-NB06 menghitung **bbox tidak standar per frame**. ByteTrack tetap dipakai untuk memberikan `track_id`
-dan stabilitas temporal, tetapi angka utama tidak diagregasi menjadi kendaraan unik.
+NB06 menghitung **kendaraan tidak standar satu kali saat track melintasi counting line**. Sebagai
+metrik pendamping, jumlah bbox tidak standar per frame tetap disimpan terpisah untuk mengaudit aktivitas
+deteksi; metrik pendamping itu bukan total kendaraan.
 
-**Posisi:** `NB02 → NB02b → NB03 → NB04 → NB05 (kalibrasi) → NB06 (hitung unik)`
+**Posisi:** `NB02 â†’ NB02b â†’ NB03 â†’ NB04 â†’ NB05 (kalibrasi) â†’ NB06 (hitung unik)`
 
 ## Kenapa stage terpisah, bukan menumpang NB05
 
@@ -52,14 +53,20 @@ rumusnya tetap umum supaya tidak diam-diam salah kalau ROI berubah. Audit pemeta
 2. Deteksi difilter dengan ambang confidence per kelas hasil kalibrasi NB05. Ambang **tidak**
    dikalibrasi ulang di sini.
 3. Satu `track_id` = satu kendaraan. Track yang terputus karena kendaraan sempat hilang dari
-   pandangan **disambung kembali** sebelum dihitung (jenis sama, jeda 1–50 frame, box bertumpuk atau
+   pandangan **disambung kembali** sebelum dihitung (jenis sama, jeda 1â€“50 frame, box bertumpuk atau
    pusat berdekatan), lalu `MIN_TRACK_HITS` diterapkan pada kendaraan hasil sambungan. Bukti setiap
    penggabungan ada di `fragment_merges.csv`.
 4. Kelas per track = **suara mayoritas** di antara frame yang lolos ambang; seri diputus oleh skor
    rata-rata lebih tinggi. Alasannya: kondisi lampu satu kendaraan bisa terbaca berbeda antar frame,
    dan satu kendaraan hanya boleh menyumbang satu angka.
-5. YOLO mendeteksi tiga kelas (`Mobil`, `Motor`, `PantulanCahaya`) dan CNN memprediksi `Standar`, `TidakStandar`, atau `PantulanCahaya`. Pantulan disaring sebelum ByteTrack, tidak digambar, dan tidak dihitung.
+5. YOLO dan CNN memakai lima kelas yang sama. YOLO memberi bbox/track; CNN mengklasifikasikan crop bbox menjadi kelas akhir. PantulanCahaya tetap kelas terlatih, tetapi tidak dihitung sebagai kendaraan dan tidak digambar sebagai event.
    Kelas ini tidak dihitung dan tidak digambar pada overlay.
+6. Angka utama adalah satu crossing per vehicle track tidak standar. Garis horizontal awal berada pada
+   72% tinggi frame dan dipotong mengikuti ROI. Track dihitung ketika center bbox berpindah sisi garis
+   melewati hysteresis 1.5% tinggi frame, dan center x harus berada di rentang garis dalam ROI;
+   arah dan frame crossing dicatat. Track yang mulai sudah di sisi seberang tanpa perpindahan
+   teramati tidak dihitung. Hitungan bbox per frame tetap tersedia
+   sebagai metrik pendamping.
 
 ## Ambang internal tracker
 
@@ -100,13 +107,21 @@ Nama kamera diambil dari berkas (`stem.split("_")[1]`) dan **wajib** ada di peta
 
 ## Mode smoke
 
-`PIPELINE_SMOKE=1` → `output/smoke/`, hanya video pertama dari split yang dihitung, maksimum
+`PIPELINE_SMOKE=1` â†’ `output/smoke/`, hanya video pertama dari split yang dihitung, maksimum
 `SMOKE_MAX_FRAMES_PER_VIDEO` frame. Tujuannya menguji alur tracking, bukan mengukur jumlah.
 
 Output: `output/nb06/{tracking_detections.csv, track_summary.csv, counting_by_video.csv,
 counting_timeline.csv, overlay_manifest.json, counting_summary.json, roi_mapping_audit.csv,
 counting_bar.png, overlays/*.mp4}`. Overlay
 dibuat untuk satu rekaman terbaru setiap kamera; agregasi hitungan tetap hanya memakai split test.
+
+### Overlay mask SAM2 (wajib)
+
+SAM2 membuat mask dari semua bbox YOLO per frame. Mask menjadi input photometry/bentuk CNN dan selalu
+ditampilkan di overlay: kelas TidakStandar merah transparan, kelas Standar biru transparan. CNN
+menggabungkan crop RGB, 77 fitur numerik berbasis bbox+mask, dan one-hot cluster e-means. Centroid,
+scaler, dan checkpoint harus berasal dari NB04b yang sama. Proses SAM2 menambah waktu dan memori,
+terutama di CPU.
 """
 
 CONFIG_SOURCE = '''from pathlib import Path
@@ -122,7 +137,7 @@ from IPython.display import Markdown, display
 from pipeline_common import (
     CLASS_NAMES,
     TRAINING_CLASS_NAMES,
-    TRAINING_CLASS_BY_ANNOTATION_CLASS,
+    detect_center_line_crossing,
     COUNT_CONTRACT,
     FRAGMENT_DISTANCE_RATIO,
     FRAGMENT_MAX_GAP_FRAMES,
@@ -133,11 +148,11 @@ from pipeline_common import (
     stitch_track_fragments,
     validate_tracker_thresholds,
 )
-from attribute_classifier import IMAGE_TRANSFORM, decode_attributes, extract_image_crop, load_classifier
+from attribute_classifier import IMAGE_TRANSFORM, decode_attributes, extract_mask_aware_features, load_classifier
+from feature_clustering import assign_e_means_clusters, cluster_one_hot
 
-RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
-    raise RuntimeError("Set RISET_PROJECT_ROOT ke root proyek atau jalankan notebook dari root proyek.")
+from pipeline_common import resolve_project_root
+RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT_ROOT = RISET_ROOT / "output"
 SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"
 DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
@@ -156,6 +171,7 @@ TRACK_SUMMARY_PATH = NB06_ROOT / "track_summary.csv"
 COUNTING_BY_VIDEO_PATH = NB06_ROOT / "counting_by_video.csv"
 COUNTING_SUMMARY_PATH = NB06_ROOT / "counting_summary.json"
 COUNTING_TIMELINE_PATH = NB06_ROOT / "counting_timeline.csv"
+BBOX_TIMELINE_PATH = NB06_ROOT / "bbox_per_frame_timeline.csv"
 OVERLAY_MANIFEST_PATH = NB06_ROOT / "overlay_manifest.json"
 EVENT_CLIPS_DIR = NB06_ROOT / "event_clips"
 EVENT_CROPS_DIR = NB06_ROOT / "event_crops"
@@ -167,11 +183,16 @@ OVERLAY_DIR = NB06_ROOT / "overlays"
 EVENT_CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 EVENT_CROPS_DIR.mkdir(parents=True, exist_ok=True)
 OVERLAY_LABELS = os.environ.get("NB06_OVERLAY_LABELS", "1") == "1"
+SAM2_MODEL_ID = os.environ.get("NB06_SAM2_MODEL", "facebook/sam2.1-hiera-tiny")
 
 NB06_ROOT.mkdir(parents=True, exist_ok=True)
 OVERLAY_DIR.mkdir(parents=True, exist_ok=True)
 
 COUNTED_SPLITS = ["test"]
+COUNTING_LINE_Y_RATIO_BY_CAMERA = {
+    camera_id: 0.72 for camera_id in SPLIT_NAME_BY_CAMERA
+}
+COUNTING_LINE_HYSTERESIS_RATIO = 0.015
 TRACKER_CONFIG_PATH = RISET_ROOT / "builders" / "bytetrack_nb06.yaml"
 TRACKER_CONFIG = str(TRACKER_CONFIG_PATH)
 IMAGE_SIZE = 640
@@ -192,10 +213,10 @@ pd.set_option("display.width", 220)
 pd.set_option("display.max_columns", 40)
 
 display(Markdown(
-    f"NB06 siap. Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · device: **{DEVICE}** · "
-    f"bobot: `{WEIGHTS_PATH}` (ada: **{WEIGHTS_PATH.exists()}**) · split dihitung: {COUNTED_SPLITS} · "
-    f"audit/galeri kendaraan unik: minimal {MIN_TRACK_HITS} kemunculan per track · "
-    f"overlay label: **{OVERLAY_LABELS}**"
+    f"NB06 siap. Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** Â· device: **{DEVICE}** Â· "
+    f"bobot: `{WEIGHTS_PATH}` (ada: **{WEIGHTS_PATH.exists()}**) Â· split dihitung: {COUNTED_SPLITS} Â· "
+    f"audit/galeri kendaraan unik: minimal {MIN_TRACK_HITS} kemunculan per track Â· "
+    f"overlay label: **{OVERLAY_LABELS}** Â· overlay mask SAM2: **ON ({SAM2_MODEL_ID})**"
 ))'''
 
 JOBS_SOURCE = '''def load_json_document(path: Path) -> dict:
@@ -240,7 +261,7 @@ selected_thresholds = thresholds_payload["selected_thresholds"]
 effective_thresholds = {
     class_name: float(
         selected_thresholds.get(
-            TRAINING_CLASS_BY_ANNOTATION_CLASS.get(class_name, class_name),
+            class_name,
             selected_thresholds.get(class_name, 0.25),
         )
     )
@@ -306,6 +327,37 @@ for camera_id, video_path in sorted(latest_video_by_camera.items()):
         **video_metadata,
     })
 
+def resolve_counting_line(camera_id: str, width: int, height: int) -> tuple[int, int, int]:
+    """Horizontal tripwire at a camera-specific normalized image height, clipped to ROI polygon."""
+    if camera_id not in COUNTING_LINE_Y_RATIO_BY_CAMERA:
+        raise ValueError(f"Counting line belum dikonfigurasi untuk {camera_id}")
+    y_line = int(round(height * COUNTING_LINE_Y_RATIO_BY_CAMERA[camera_id]))
+    polygon = roi_config[camera_id].get("polygon")
+    if not polygon:
+        raise ValueError(f"ROI polygon diperlukan untuk menentukan counting line: {camera_id}")
+    intersections = []
+    for index, point_a in enumerate(polygon):
+        point_b = polygon[(index + 1) % len(polygon)]
+        x1, y1 = map(float, point_a)
+        x2, y2 = map(float, point_b)
+        if (y1 <= y_line < y2) or (y2 <= y_line < y1):
+            ratio = (y_line - y1) / (y2 - y1)
+            intersections.append(x1 + ratio * (x2 - x1))
+    if len(intersections) < 2:
+        raise ValueError(f"Garis hitung y={y_line} tidak memotong ROI valid kamera {camera_id}")
+    x_start = max(0, int(round(min(intersections))))
+    x_end = min(width - 1, int(round(max(intersections))))
+    if x_end - x_start < 8:
+        raise ValueError(f"Counting line terlalu pendek setelah dipotong ROI: {camera_id}")
+    return y_line, x_start, x_end
+
+
+for scan_job in scan_jobs:
+    line_y, line_x1, line_x2 = resolve_counting_line(
+        scan_job["camera_id"], scan_job["width"], scan_job["height"]
+    )
+    scan_job.update({"count_line_y": line_y, "count_line_x1": line_x1, "count_line_x2": line_x2})
+
 if SMOKE_MODE:
     scan_jobs = scan_jobs[:1]
 
@@ -318,13 +370,18 @@ display(discovery_frame)
 display(Markdown("### Video yang diproses"))
 display(scan_frame)
 display(Markdown(
-    f"Total frame diproses: **{int(scan_frame['frame_limit'].sum())}** · "
+    f"Total frame diproses: **{int(scan_frame['frame_limit'].sum())}** Â· "
     f"estimasi durasi: **{scan_frame['frame_limit'].sum() / scan_frame['fps'].mean() / 60:.1f} menit** video"
 ))'''
 
 TRACK_SOURCE = '''from PIL import Image
 from ultralytics import YOLO
-from attribute_classifier import decode_attributes, extract_pixel_features, load_classifier
+from attribute_classifier import decode_attributes, extract_mask_aware_features, load_classifier
+from feature_clustering import assign_e_means_clusters, cluster_one_hot
+
+from transformers import Sam2Model, Sam2Processor
+sam2_processor = Sam2Processor.from_pretrained(SAM2_MODEL_ID)
+sam2_model = Sam2Model.from_pretrained(SAM2_MODEL_ID).to(DEVICE).eval()
 
 RAW_BOX_DECIMALS = 2
 SCORE_DECIMALS = 4
@@ -370,28 +427,63 @@ def draw_debug_label(
     )
 
 
-attribute_model, attribute_mean, attribute_std, attribute_metadata = load_classifier(ATTRIBUTE_MODEL_PATH, DEVICE)
-if attribute_metadata.get("model_type") != "resnet18_hsv_fusion":
+def get_sam2_masks(crop_image: Image.Image, boxes_xyxy: np.ndarray) -> list[np.ndarray]:
+    if len(boxes_xyxy) == 0:
+        return []
+    sam_inputs = sam2_processor(
+        images=crop_image,
+        input_boxes=[[list(map(float, row)) for row in boxes_xyxy]],
+        return_tensors="pt",
+    ).to(DEVICE)
+    with torch.inference_mode():
+        sam_outputs = sam2_model(**sam_inputs)
+    masks = sam2_processor.post_process_masks(
+        sam_outputs.pred_masks.cpu(), sam_inputs["original_sizes"].cpu()
+    )[0]
+    quality = sam_outputs.iou_scores[0].detach().cpu()
+    return [masks[index, int(quality[index].argmax())].numpy().astype(bool) for index in range(len(boxes_xyxy))]
+
+
+def blend_mask_on_frame(
+    frame: np.ndarray, crop_mask: np.ndarray, offset_x: int, offset_y: int,
+    scale: float, color_bgr: tuple[int, int, int], alpha: float = 0.30,
+) -> None:
+    full_height, full_width = frame.shape[:2]
+    roi_width = max(1, int(round(crop_mask.shape[1] / scale)))
+    roi_height = max(1, int(round(crop_mask.shape[0] / scale)))
+    full_mask = cv2.resize(crop_mask.astype(np.uint8), (roi_width, roi_height), interpolation=cv2.INTER_NEAREST).astype(bool)
+    x1, y1 = max(0, offset_x), max(0, offset_y)
+    x2, y2 = min(full_width, offset_x + roi_width), min(full_height, offset_y + roi_height)
+    if x2 <= x1 or y2 <= y1:
+        return
+    local_mask = full_mask[y1 - offset_y:y2 - offset_y, x1 - offset_x:x2 - offset_x]
+    region = frame[y1:y2, x1:x2]
+    tint = np.asarray(color_bgr, dtype=np.float32)
+    region[local_mask] = np.clip(region[local_mask].astype(np.float32) * (1 - alpha) + tint * alpha, 0, 255).astype(np.uint8)
+
+
+attribute_model, attribute_mean, attribute_std, cluster_centroids, attribute_metadata = load_classifier(ATTRIBUTE_MODEL_PATH, DEVICE)
+if attribute_metadata.get("model_type") != "resnet18_sam2_emeans_fusion_5class":
     raise RuntimeError(
         "Checkpoint classifier tidak kompatibel. Latih ulang dengan "
         "`python builders/train_attribute_classifier.py` sebelum menjalankan NB06."
     )
-if tuple(attribute_metadata.get("attribute_names", ())) != ("standar", "tidak_standar", "pantulan_cahaya"):
-    raise RuntimeError("Checkpoint CNN belum memakai tiga label aktif; latih ulang NB04b.")
+if tuple(attribute_metadata.get("attribute_names", ())) != tuple(TRAINING_CLASS_NAMES):
+    raise RuntimeError("Checkpoint CNN belum memakai urutan lima kelas aktif; latih ulang NB04b.")
 
 
-def classify_vehicle_condition(crop_image: Image.Image, crop_box: list[float]) -> str:
-    crop = extract_image_crop(crop_image, crop_box)
+def classify_vehicle_condition(roi_image: Image.Image, roi_box: list[float], roi_mask: np.ndarray) -> str:
+    crop = extract_image_crop(roi_image, roi_box)
     image_tensor = IMAGE_TRANSFORM(crop).unsqueeze(0).to(DEVICE)
-    raw_features = extract_pixel_features(crop, [0, 0, crop.width, crop.height])
+    raw_features = extract_mask_aware_features(roi_image, roi_box, roi_mask)
     normalized_features = (raw_features - attribute_mean) / np.maximum(attribute_std, 1e-6)
     feature_tensor = torch.from_numpy(normalized_features.astype(np.float32)).unsqueeze(0).to(DEVICE)
+    cluster_id = assign_e_means_clusters(normalized_features[None, :], cluster_centroids)
+    cluster_tensor = torch.from_numpy(cluster_one_hot(cluster_id, len(cluster_centroids))).to(DEVICE)
     with torch.no_grad():
-        logits = attribute_model(image_tensor, feature_tensor).squeeze(0).cpu().numpy()
-        attributes = decode_attributes(logits, attribute_metadata.get("thresholds"))
-    if attributes["pantulan_cahaya"]:
-        return "PantulanCahaya"
-    return "TidakStandar" if attributes["tidak_standar"] else "Standar"
+        logits = attribute_model(image_tensor, feature_tensor, cluster_tensor).squeeze(0).cpu().numpy()
+    attributes = decode_attributes(logits, attribute_metadata.get("thresholds"))
+    return next(class_name for class_name, is_selected in attributes.items() if is_selected)
 
 
 def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
@@ -402,7 +494,7 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
             f"Checkpoint YOLO memakai kelas {model_names}; kontrak aktif {TRAINING_CLASS_NAMES}. "
             "Latih ulang NB04 sebelum NB06."
         )
-    vehicle_class_ids = [i for i, name in enumerate(TRAINING_CLASS_NAMES) if name in {"Mobil", "Motor"}]
+    vehicle_class_ids = [i for i, name in enumerate(TRAINING_CLASS_NAMES) if name != "PantulanCahaya"]
     video_capture = cv2.VideoCapture(job["video_path"])
     tracking_rows = []
     audit_rows = []
@@ -507,11 +599,19 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                 processed_frame_count += 1
                 frame_boxes = tracking_result.boxes if tracking_result is not None else None
                 overlay_frame = frame_array.copy()
+                line_start = (int(job["count_line_x1"]), int(job["count_line_y"]))
+                line_end = (int(job["count_line_x2"]), int(job["count_line_y"]))
+                cv2.line(overlay_frame, line_start, line_end, (0, 220, 255), 2, cv2.LINE_AA)
+                cv2.putText(
+                    overlay_frame, "GARIS HITUNG", (line_start[0], max(18, line_start[1] - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 220, 255), 1, cv2.LINE_AA,
+                )
                 if frame_boxes is not None and len(frame_boxes) > 0:
                     box_coordinates = frame_boxes.xyxy.cpu().numpy()
                     box_scores = frame_boxes.conf.cpu().numpy()
                     box_classes = frame_boxes.cls.cpu().numpy().astype(int)
                     box_track_ids = frame_boxes.id.cpu().numpy().astype(int) if frame_boxes.id is not None else None
+                    segmentation_masks = get_sam2_masks(crop_image, box_coordinates)
                     for box_index in range(len(box_scores)):
                         crop_box = [float(coordinate) for coordinate in box_coordinates[box_index]]
                         frame_box = [
@@ -525,21 +625,30 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                         track_id = int(box_track_ids[box_index]) if box_track_ids is not None else None
                         if track_id is None:
                             untracked_detection_count += 1
+                            blend_mask_on_frame(
+                                overlay_frame, segmentation_masks[box_index], offset_x, offset_y,
+                                scale, (255, 170, 45),
+                            )
                             continue
-                        if detector_class_name in {"Mobil", "Motor"}:
-                            vehicle_type = detector_class_name
-                            if track_id not in condition_by_track:
-                                condition_by_track[track_id] = classify_vehicle_condition(frame_image, frame_box)
-                            condition = condition_by_track[track_id]
-                            output_class_name = "PantulanCahaya" if condition == "PantulanCahaya" else vehicle_type + condition
-                        else:
-                            output_class_name = detector_class_name
+                        if track_id not in condition_by_track:
+                            condition_by_track[track_id] = classify_vehicle_condition(
+                                crop_image, crop_box, segmentation_masks[box_index]
+                            )
+                        output_class_name = condition_by_track[track_id]
                         is_nonstandard = output_class_name in {"MobilTidakStandar", "MotorTidakStandar"}
+                        is_vehicle = output_class_name in {
+                            "MobilStandar", "MobilTidakStandar", "MotorStandar", "MotorTidakStandar"
+                        }
+                        overlay_color = EVENT_COLORS_BGR["TidakStandar"] if is_nonstandard else (255, 170, 45)
+                        if is_vehicle:
+                            blend_mask_on_frame(
+                                overlay_frame, segmentation_masks[box_index], offset_x, offset_y,
+                                scale, overlay_color,
+                            )
                         if is_nonstandard:
-                            overlay_color = EVENT_COLORS_BGR["TidakStandar"]
                             cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), overlay_color, 2)
                             if OVERLAY_LABELS:
-                                overlay_label = f"ID {track_id} · {box_scores[box_index] * 100:.0f}%"
+                                overlay_label = f"ID {track_id} Â· {box_scores[box_index] * 100:.0f}%"
                                 draw_debug_label(
                                     overlay_frame, overlay_label, overlay_color,
                                     (x1, y1, x2, y2),
@@ -587,7 +696,7 @@ for job in scan_jobs:
     video_summaries.append(video_summary)
     mapping_audit_rows.extend(audit_rows)
     display(Markdown(
-        f"`{job['video_stem']}` selesai — {video_summary['frames_processed']} frame, "
+        f"`{job['video_stem']}` selesai â€” {video_summary['frames_processed']} frame, "
         f"{video_summary['detections']} deteksi, {video_summary['untracked_detections']} tanpa track id, "
         f"{video_summary['invalid_tracker_detections_removed']} box degenerat dibuang, "
         f"{video_summary['tracker_recoveries']} recovery Kalman, "
@@ -676,6 +785,49 @@ def summarise_units(detection_frame: pd.DataFrame, grouping_column: str) -> pd.D
     )
 
 
+def detect_line_crossings(detection_frame: pd.DataFrame) -> pd.DataFrame:
+    """Emit one event per non-standard vehicle track when its bbox center crosses its camera line."""
+    line_by_video = {job["video_stem"]: job for job in scan_jobs}
+    crossing_rows = []
+    event_classes = {"MobilTidakStandar", "MotorTidakStandar"}
+    for (video_stem, vehicle_id), unit_frame in detection_frame.groupby(["video_stem", "vehicle_id"], sort=True):
+        ordered = unit_frame.sort_values("frame_index")
+        if len(ordered) < MIN_TRACK_HITS:
+            continue
+        event_class, mean_score = resolve_track_class(ordered)
+        if event_class not in event_classes:
+            continue
+        job = line_by_video[video_stem]
+        crossing = detect_center_line_crossing(
+            ordered.to_dict(orient="records"),
+            line_y=float(job["count_line_y"]),
+            line_x1=float(job["count_line_x1"]),
+            line_x2=float(job["count_line_x2"]),
+            hysteresis=max(3.0, float(job["height"]) * COUNTING_LINE_HYSTERESIS_RATIO),
+            min_hits=MIN_TRACK_HITS,
+        )
+        if crossing is None:
+            continue
+        row = crossing["row"]
+        crossing_rows.append({
+            "video_stem": video_stem,
+            "camera_id": row["camera_id"],
+            "vehicle_id": int(vehicle_id),
+            "track_id": int(row["track_id"]),
+            "class_name": event_class,
+            "score": round(float(row["score"]), 4),
+            "mean_track_score": round(mean_score, 4),
+            "crossing_frame": int(row["frame_index"]),
+            "crossing_direction": crossing["crossing_direction"],
+            "line_y": int(job["count_line_y"]),
+            "frame_x1": float(row["frame_x1"]),
+            "frame_y1": float(row["frame_y1"]),
+            "frame_x2": float(row["frame_x2"]),
+            "frame_y2": float(row["frame_y2"]),
+        })
+    return pd.DataFrame(crossing_rows)
+
+
 test_tracking_frame = tracking_frame[
     tracking_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).isin(COUNTED_SPLITS)
 ].copy()
@@ -726,6 +878,22 @@ presentation_timeline_frame["scope"] = presentation_timeline_frame["camera_id"].
 )
 event_timeline_frame = presentation_timeline_frame
 
+crossing_frame = detect_line_crossings(presentation_vehicle_detections)
+if crossing_frame.empty:
+    crossing_frame = pd.DataFrame(columns=[
+        "video_stem", "camera_id", "vehicle_id", "track_id", "class_name", "score",
+        "mean_track_score", "crossing_frame", "crossing_direction", "line_y",
+        "frame_x1", "frame_y1", "frame_x2", "frame_y2",
+    ])
+fps_by_video = {row.video_stem: float(row.fps) for row in scan_frame.itertuples()}
+crossing_frame["fps"] = crossing_frame["video_stem"].map(fps_by_video)
+crossing_frame["timestamp_seconds"] = crossing_frame["crossing_frame"] / crossing_frame["fps"]
+crossing_frame["scope"] = crossing_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
+    lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
+)
+crossing_frame["count"] = 1
+crossing_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
+
 nonstandard_frame = tracking_frame[
     tracking_frame["class_name"].isin({"MobilTidakStandar", "MotorTidakStandar"})
 ].copy()
@@ -743,10 +911,10 @@ timeline_frame["timestamp_seconds"] = timeline_frame["counting_frame"] / timelin
 timeline_frame["scope"] = timeline_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
     lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
 )
-timeline_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
+timeline_frame.to_csv(NB06_ROOT / "bbox_per_frame_timeline.csv", index=False)
 
-official_bbox_frame = bbox_counted_frame[
-    bbox_counted_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).isin(COUNTED_SPLITS)
+official_bbox_frame = crossing_frame[
+    crossing_frame["scope"] == "official"
 ].copy()
 official_qualified_frame = qualified_frame[
     qualified_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).isin(COUNTED_SPLITS)
@@ -779,7 +947,8 @@ for video_job in sorted(
     per_video_rows.append({
         "video_stem": video_stem,
         "camera_id": video_job["camera_id"],
-        "bbox_counted": int(len(event_slice)),
+        "crossings_counted": int(len(event_slice)),
+        "bbox_per_frame_detections": int(len(bbox_counted_frame[bbox_counted_frame["video_stem"] == video_stem])),
         **video_class_counts,
         **{
             contract_key: int(sum(
@@ -790,7 +959,8 @@ for video_job in sorted(
         },
     })
 per_video_columns = [
-    "video_stem", "camera_id", "bbox_counted", *CLASS_NAMES, *COUNT_CONTRACT.keys()
+    "video_stem", "camera_id", "crossings_counted", "bbox_per_frame_detections",
+    *CLASS_NAMES, *COUNT_CONTRACT.keys()
 ]
 per_video_frame = pd.DataFrame(per_video_rows, columns=per_video_columns)
 per_video_frame.to_csv(COUNTING_BY_VIDEO_PATH, index=False)
@@ -806,6 +976,18 @@ for video_summary in video_summaries:
         "fps": float(matching_job["fps"]),
         "frames_processed": int(video_summary["frames_processed"]),
         "duration_seconds": round(float(video_summary["frames_processed"]) / float(matching_job["fps"]), 3),
+        "counting_line": {
+            "y_pixel": int(matching_job["count_line_y"]),
+            "x_start": int(matching_job["count_line_x1"]),
+            "x_end": int(matching_job["count_line_x2"]),
+            "y_ratio": COUNTING_LINE_Y_RATIO_BY_CAMERA[matching_job["camera_id"]],
+        },
+        "segmentation_overlay": {
+            "enabled": True,
+            "model": SAM2_MODEL_ID,
+            "alpha": 0.30,
+            "classes": ["MobilTidakStandar", "MotorTidakStandar"],
+        },
     })
 OVERLAY_MANIFEST_PATH.write_text(
     json.dumps(overlay_manifest, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -898,15 +1080,15 @@ fragments_stitched = tracks_total - vehicles_total
 duplication_factor = len(qualified_frame) / max(len(counted_vehicle_frame), 1)
 
 display(Markdown(
-    f"Deteksi lolos ambang: **{len(qualified_frame)}** box · "
-    f"track mentah: **{tracks_total}** · setelah penyambungan fragmen: **{vehicles_total}** kendaraan "
-    f"(**{fragments_stitched}** fragmen disambung) · "
-    f"audit kendaraan unik (>= {MIN_TRACK_HITS} kemunculan): **{len(counted_vehicle_frame)}** · "
+    f"Deteksi lolos ambang: **{len(qualified_frame)}** box Â· "
+    f"track mentah: **{tracks_total}** Â· setelah penyambungan fragmen: **{vehicles_total}** kendaraan "
+    f"(**{fragments_stitched}** fragmen disambung) Â· "
+    f"audit kendaraan unik (>= {MIN_TRACK_HITS} kemunculan): **{len(counted_vehicle_frame)}** Â· "
     f"rasio duplikasi vs hitung per frame: **{duplication_factor:.1f}x**"
 ))
 display(Markdown(f"### Fragmen yang disambung ({len(fragment_merges)} kendaraan)"))
 display(fragment_merges.head(20))
-display(Markdown("### Keluaran wajib (bbox tidak standar per frame)"))
+display(Markdown("### Keluaran utama (track tidak standar yang melintasi garis)"))
 display(pd.DataFrame([{"keluaran": key, "jumlah": value} for key, value in counting_totals.items()]))
 display(Markdown("### Rincian per video"))
 display(per_video_frame)'''
@@ -916,8 +1098,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 labelled_totals = {
-    "bbox mobil": counting_totals["jumlah_bbox_mobil_tidak_standar"],
-    "bbox motor": counting_totals["jumlah_bbox_motor_tidak_standar"],
+    "mobil melintasi garis": counting_totals["jumlah_kendaraan_mobil_tidak_standar_melintasi_garis"],
+    "motor melintasi garis": counting_totals["jumlah_kendaraan_motor_tidak_standar_melintasi_garis"],
 }
 
 figure, axis = plt.subplots(figsize=(12, 5))
@@ -926,9 +1108,9 @@ bar_positions = range(len(plot_totals))
 axis.bar(bar_positions, list(plot_totals.values()), color="#1F7A4D")
 axis.set_xticks(list(bar_positions))
 axis.set_xticklabels(list(plot_totals.keys()), rotation=30, ha="right")
-axis.set_ylabel("jumlah bbox per frame")
+axis.set_ylabel("kendaraan tidak standar melintasi garis")
 axis.set_title(
-    f"NB06 — bbox tidak standar di dalam ROI ({len(official_bbox_frame)} bbox)"
+    f"NB06 â€” crossing kendaraan tidak standar ({len(official_bbox_frame)} track)"
     + (" (SMOKE, bukan hasil riset)" if SMOKE_MODE else "")
 )
 for position, value in zip(bar_positions, plot_totals.values()):
@@ -942,8 +1124,10 @@ counting_summary_payload = {
     "smoke_mode": SMOKE_MODE,
     "weights": str(WEIGHTS_PATH),
     "tracker": TRACKER_CONFIG,
+    "segmentation_overlay": {"enabled": True, "model": SAM2_MODEL_ID, "alpha": 0.30},
+    "counting_line_y_ratio_by_camera": COUNTING_LINE_Y_RATIO_BY_CAMERA,
     "counted_splits": COUNTED_SPLITS,
-    "unit": "bbox per frame (satu baris = satu bbox tidak standar pada satu frame)",
+    "unit": "vehicle line crossing (satu track dihitung satu kali per video saat melintasi garis)",
     "frames_processed": int(video_summary_frame["frames_processed"].sum()),
     "raw_detections": int(len(tracking_frame)),
     "untracked_detections": total_untracked,
@@ -951,9 +1135,10 @@ counting_summary_payload = {
     "tracks_total": tracks_total,
     "vehicles_total": vehicles_total,
     "fragments_stitched": fragments_stitched,
-    "bbox_counted": int(len(official_bbox_frame)),
+    "line_crossings_counted": int(len(official_bbox_frame)),
+    "bbox_per_frame_nonstandard_detections": int(len(bbox_counted_frame[bbox_counted_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).isin(COUNTED_SPLITS)])),
     "unique_vehicles_audit": int(len(counted_vehicle_frame)),
-    "presentation_bbox_counted": int(len(bbox_counted_frame) - len(official_bbox_frame)),
+    "presentation_line_crossings": int((crossing_frame["scope"] == "presentation_only").sum()),
     "videos_found": int(len(discovery_frame)),
     "videos_counted": int(len(scan_jobs)),
     "min_track_hits": MIN_TRACK_HITS,
@@ -981,14 +1166,14 @@ class_lines = "\\n".join(
 display(Markdown(
     f"""### Ringkasan NB06
 
-Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · video: {len(scan_jobs)} · frame diproses: **{int(video_summary_frame['frames_processed'].sum())}**
+Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** Â· video: {len(scan_jobs)} Â· frame diproses: **{int(video_summary_frame['frames_processed'].sum())}**
 
 | Tahap | Jumlah |
 |---|---|
 | track mentah dari ByteTrack | {tracks_total} |
 | fragmen disambung | {fragments_stitched} |
 | kendaraan setelah penyambungan | {vehicles_total} |
-| bbox tidak standar (official test) | {len(official_bbox_frame)} |
+| kendaraan tidak standar melintasi garis (official test) | {len(official_bbox_frame)} |
 
 | Keluaran | Jumlah |
 |---|---|
@@ -1000,12 +1185,12 @@ Mode: **{'SMOKE' if SMOKE_MODE else 'PENUH'}** · video: {len(scan_jobs)} · fra
 |---|---|
 {class_lines}
 
-Gambar: `{FIGURE_PATH}` · ringkasan: `{COUNTING_SUMMARY_PATH}` · track: `{TRACK_SUMMARY_PATH}` · fragmen: `{FRAGMENT_MERGES_PATH}`
+Gambar: `{FIGURE_PATH}` Â· ringkasan: `{COUNTING_SUMMARY_PATH}` Â· track: `{TRACK_SUMMARY_PATH}` Â· fragmen: `{FRAGMENT_MERGES_PATH}`
 
-**Cara membaca angka ini:** satu baris pada counting utama = satu bbox tidak standar pada satu frame.
-Kendaraan yang sama dapat muncul berkali-kali pada frame berbeda. ByteTrack tetap dipakai untuk
-menyediakan `track_id` dan audit temporal, tetapi bukan untuk mengagregasi angka utama menjadi
-kendaraan unik.
+**Cara membaca angka ini:** satu baris pada counting utama = satu vehicle track tidak standar
+yang melintasi garis hitung. Setiap kendaraan dihitung paling banyak satu kali per video. Arah
+crossing dicatat (`up`/`down`). Bbox-per-frame disimpan di `bbox_per_frame_timeline.csv` sebagai
+metrik pendamping untuk menilai aktivitas detektor.
 
 **Penyambungan fragmen.** Track yang terputus karena kendaraan sempat hilang dari pandangan
 (lebih dari buffer tracker) disambung kembali bila jarak waktunya <= {FRAGMENT_MAX_GAP_FRAMES} frame

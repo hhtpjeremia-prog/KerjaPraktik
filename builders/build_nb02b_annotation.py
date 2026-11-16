@@ -15,14 +15,15 @@ EXPECTED_MARKDOWN_CELL_COUNT = 1
 
 NAVBAR_MARKDOWN = """# NB02b — Anotasi Manual Kondisi Lampu
 
-Tahap ini mengisi label manusia untuk kendaraan dan pantulan. Kandidat train/validation mencakup frame curated resmi dan proposal tambahan NB02d yang wajib diperiksa manusia; test tetap dipisahkan untuk ground truth.
+Tahap ini menyimpan anotasi manual dan dapat dipakai untuk audit/koreksi proposal FM. Proposal base juga masuk langsung sebagai pseudo-label train pada NB04/NB04b; review satu per satu bukan syarat untuk jalur pseudo tersebut. Test tetap dipisahkan untuk ground truth.
 Grounding DINO di NB02 hanya memberi *lokasi* lampu; di sini manusia menetapkan kelasnya.
 
 **Posisi:** `NB01 → NB02 → NB02b (anotasi awal) → NB02d (fine-tune + proposal tambahan) → NB02b (review tambahan) → NB03 → NB04 → NB05 → NB06`
 
 **Sumber gambar:** frame ROI-crop dari `output/nb02/crops/` dan proposal tambahan ROI-crop dari
-`output/nb02d/crops/`. Frame baru tetap ditampilkan meskipun FM tidak mengusulkan bbox, sehingga
-anotator dapat menandainya sebagai frame negatif setelah pemeriksaan.
+varian NB02d yang dipilih. Lima kelas prediksi Grounding DINO tampil langsung pada bbox sebagai label
+awal, termasuk confidence; anotator dapat mengoreksi atau menghapusnya. Frame tanpa proposal tetap tampil
+agar anotator dapat memastikan frame negatif.
 
 ## Kelas anotasi (hotkey `1`–`5`)
 
@@ -58,7 +59,7 @@ tidak memenuhi definisi lampu standar masuk `*TidakStandar`. Ragu → `BelumDite
 > (MASTER §13.9a). Acuan visual berupa set contoh patch akan disimpan di
 > `output/annotation/reference_patches/`.
 
-Store/COCO mempertahankan lima kelas anotasi. Export YOLO memetakan empat label kendaraan ke `Mobil`/`Motor` dan mengekspor `PantulanCahaya` sebagai kelas ketiga. Pantulan juga menjadi label ketiga CNN bersama `Standar` dan `TidakStandar`. NB06 menyaring pantulan sebelum ByteTrack, overlay, dan counting.
+Store/COCO, YOLO, dan CNN memakai lima kelas identik. `BelumDitentukan` adalah status anotasi sementara lama, bukan kelas pseudo-label atau target model. Pantulan adalah kelas latih, tetapi NB06 mengecualikannya dari hitung kendaraan dan overlay event.
 
 **Satu box = satu kendaraan.** Untuk mobil, box melingkupi sepasang lampu (union); untuk
 motor, box melingkupi lampunya. Kelas `Normal` wajib ada supaya jumlah kendaraan total
@@ -66,13 +67,10 @@ bisa dihitung, bukan hanya kendaraan yang lampunya menyimpang.
 
 ## Status "belum ditentukan"
 
-Setiap box pseudo masuk sebagai `BelumDitentukan` — **bukan** ditebak `MobilNormal`.
-Alasannya: kendaraan yang lampunya tidak terdeteksi menyimpang belum tentu normal, dan
-label `Normal` yang salah lebih merusak daripada label kosong. Box seperti ini ditandai
-`?` dan **memblokir export** sampai Anda menetapkannya.
-
-Sinyal bantu dari NB02 (`vehicle_type` = vote FasterRCNN / geometri pasangan) ditampilkan
-sebagai petunjuk `? (Mobil)` — mempercepat keputusan tanpa mengisinya otomatis.
+Proposal NB02d langsung memakai prediksi lima kelas FM sebagai label awal dan menampilkan confidence.
+Label itu tetap pseudo-label, bukan ground truth. Proposal train diterima ke training tanpa review satu
+per satu; validation/test pseudo tidak pernah menjadi bukti akurasi. `BelumDitentukan` hanya status kerja
+manual lama. Proposal FM di luar lima kelas aktif ditolak, bukan diubah menjadi pending.
 
 ## Alur kerja
 
@@ -80,7 +78,7 @@ sebagai petunjuk `? (Mobil)` — mempercepat keputusan tanpa mengisinya otomatis
    sekali dan aman untuk resume. **Kamera split `test` dikecualikan** agar gold-set bebas
    kebocoran.
 2. **UI anotasi** (matplotlib widget + ipywidgets): drag = box baru, klik = pilih,
-   `1`–`5` = set kelas, `x` = hapus, `u` = undo, `n`/`p` = navigasi, `r` = reviewed + next.
+   `1`-`5` = set kelas, `x` = hapus, `u` = undo, `n` = reviewed + next jika tidak ada box BelumDitentukan, `p` = sebelumnya, panah kanan = navigasi.
 3. **Autosave** tiap mutasi ke `output/annotation/annotations.json` (tulis atomik).
 4. **Export**: `annotations_coco.json` + gold-set YOLO
    (`output/annotation/yolo/{images,labels}`) + `split_map.csv`.
@@ -107,9 +105,8 @@ from IPython.display import Markdown, display
 
 from pipeline_common import CLASS_NAMES, PENDING_CLASS_NAME, SPLIT_NAME_BY_CAMERA, TRAINING_CLASS_NAMES, build_roi_crop, filter_store_frames, load_roi_config, training_class_name
 
-RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
-    raise RuntimeError("Set RISET_PROJECT_ROOT ke root proyek atau jalankan notebook dari root proyek.")
+from pipeline_common import resolve_project_root
+RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT_ROOT = RISET_ROOT / "output"
 SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"
 DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
@@ -117,12 +114,13 @@ NB02_ROOT = DATA_ROOT / "nb02"
 CHUNK_DIR = NB02_ROOT / "chunks"
 CROP_DIR = NB02_ROOT / "crops"
 CURATED_CROP_DIR = OUTPUT_ROOT / "curated_crops_current_roi"
-CURATED_FRAME_DIR = OUTPUT_ROOT / "curated_frames"
 CURATED_MANIFEST_PATH = OUTPUT_ROOT / "manifests" / "curated_frames_manifest.csv"
 ROI_CONFIG = load_roi_config(OUTPUT_ROOT / "roi")
 NB02_SUMMARY_PATH = NB02_ROOT / "nb02_summary.json"
 ANNOTATION_ROOT = DATA_ROOT / "annotation"
-NB02D_PROPOSAL_MANIFEST_PATH = OUTPUT_ROOT / "nb02d" / "proposal_manifest.json"
+NB02D_VARIANT = "base"
+NB02D_PROPOSAL_ROOT = OUTPUT_ROOT / "nb02d_fiveclass" / "base"
+NB02D_PROPOSAL_MANIFEST_PATH = NB02D_PROPOSAL_ROOT / "proposal_manifest.json"
 ANNOTATION_YOLO_ROOT = ANNOTATION_ROOT / "yolo"
 ANNOTATION_YOLO_IMAGE_DIR = ANNOTATION_YOLO_ROOT / "images"
 ANNOTATION_YOLO_LABEL_DIR = ANNOTATION_YOLO_ROOT / "labels"
@@ -136,10 +134,6 @@ for output_dir in (ANNOTATION_ROOT, ANNOTATION_YOLO_IMAGE_DIR, ANNOTATION_YOLO_L
     output_dir.mkdir(parents=True, exist_ok=True)
 
 STORE_CLASS_NAMES = CLASS_NAMES + [PENDING_CLASS_NAME]
-REFLECTION_CLASS_NAME = "PantulanCahaya"
-MOBIL_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Mobil")]
-MOTOR_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Motor")]
-VEHICLE_CLASS_NAMES = MOBIL_CLASS_NAMES + MOTOR_CLASS_NAMES
 
 CLASS_COLORS = {
     "MobilStandar": "#39FF14",
@@ -289,8 +283,8 @@ def build_image_candidates(chunk_rows: list[dict], crop_dir: Path) -> list[dict]
                 "Jalankan NB02d sampai proposal train/validation selesai, lalu review di NB02b."
             )
         proposal_payload = json.loads(NB02D_PROPOSAL_MANIFEST_PATH.read_text(encoding="utf-8"))
-        if proposal_payload.get("status") != "complete" or proposal_payload.get("human_review_required") is not True:
-            raise ValueError("Manifest NB02d belum lengkap atau tidak menandai kebutuhan review manusia.")
+        if proposal_payload.get("status") != "complete":
+            raise ValueError("Manifest NB02d belum lengkap.")
         current_roi_signature = hashlib.sha256(
             json.dumps(ROI_CONFIG, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
@@ -420,12 +414,22 @@ def initialize_annotation_entry(sample_record: dict) -> dict:
     pseudo_boxes = []
     for detection in sample_record.get("detections", []):
         box = detection["box"]
+        predicted_class = detection.get("class_name")
+        if predicted_class not in CLASS_NAMES:
+            raise ValueError(
+                f"Proposal FM memiliki kelas di luar lima kelas aktif: {predicted_class!r}. "
+                "Jangan ubah prediksi FM menjadi kelas pending secara diam-diam."
+            )
         pseudo_boxes.append({
             "box": [round(float(box[0]), 2), round(float(box[1]), 2), round(float(box[2]), 2), round(float(box[3]), 2)],
-            "class_name": PENDING_CLASS_NAME,
+            "class_name": predicted_class,
             "source": BOX_SOURCE_PSEUDO,
             "deleted": False,
             "hint_vehicle_type": detection.get("vehicle_type"),
+            "model_prediction": detection.get("class_name"),
+            "model_box": [round(float(value), 2) for value in box],
+            "model_score": detection.get("score"),
+            "proposal_model": detection.get("proposal_model"),
         })
     return {
         "boxes": pseudo_boxes,
@@ -599,6 +603,13 @@ def backup_store_before_prune(store_path: Path) -> Path:
     return backup_path
 
 
+def backup_store_before_proposal_refresh(store_path: Path) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = store_path.with_name(f"annotations_backup_pre_nb02d_refresh_{timestamp}.json")
+    shutil.copyfile(store_path, backup_path)
+    return backup_path
+
+
 def load_annotation_store(store_path: Path, sample_records: list[dict]) -> dict:
     if store_path.exists():
         with store_path.open(encoding="utf-8") as store_file:
@@ -615,8 +626,34 @@ def load_annotation_store(store_path: Path, sample_records: list[dict]) -> dict:
         ))
     store_payload["frames"] = kept_frames
     store_payload["split_by_camera"] = dict(SPLIT_NAME_BY_CAMERA)
+    refreshed_proposal_count = 0
     for sample_record in sample_records:
         frame_stem = sample_record["frame_stem"]
+        prior_entry = kept_frames.get(frame_stem)
+        if sample_record.get("is_nb02d_proposal") and prior_entry is not None:
+            prior_boxes = prior_entry.get("boxes", [])
+            untouched_pseudo_frame = (
+                not prior_entry.get("reviewed", False)
+                and all(
+                    box_entry.get("source") == BOX_SOURCE_PSEUDO
+                    and not box_entry.get("deleted", False)
+                    and (
+                        (
+                            box_entry.get("model_prediction") == box_entry.get("class_name")
+                            and box_entry.get("model_box") == box_entry.get("box")
+                        )
+                        or (
+                            box_entry.get("model_prediction") is None
+                            and box_entry.get("model_box") is None
+                            and box_entry.get("class_name") == PENDING_CLASS_NAME
+                        )
+                    )
+                    for box_entry in prior_boxes
+                )
+            )
+            if untouched_pseudo_frame:
+                kept_frames[frame_stem] = initialize_annotation_entry(sample_record)
+                refreshed_proposal_count += 1
         entry = kept_frames.setdefault(frame_stem, initialize_annotation_entry(sample_record))
         image_path = Path(sample_record["image_path"])
         if not image_path.exists():
@@ -647,6 +684,12 @@ def load_annotation_store(store_path: Path, sample_records: list[dict]) -> dict:
         # setelah sumber gambar dan seluruh koordinat lolos validasi batas.
         entry["image_width"] = actual_width
         entry["image_height"] = actual_height
+    if refreshed_proposal_count and store_path.exists():
+        backup_path = backup_store_before_proposal_refresh(store_path)
+        display(Markdown(
+            f"**{refreshed_proposal_count} frame proposal NB02d diperbarui** dari varian `{NB02D_VARIANT}`. "
+            f"Backup store sebelumnya: `{backup_path.name}`. Frame reviewed dan frame yang pernah diedit dipertahankan."
+        ))
     return store_payload
 
 
@@ -680,9 +723,6 @@ display(Markdown("Lanjut ke sel berikutnya untuk memuat store anotasi."))'''
 STORE_SOURCE = '''from IPython.display import Markdown, display
 
 STORE_FRAMES_KEY = "frames"
-
-annotation_store = load_annotation_store(ANNOTATION_STORE_PATH, sample_records)
-
 
 def save_annotation_store() -> None:
     write_json_atomic(ANNOTATION_STORE_PATH, annotation_store)
@@ -806,6 +846,12 @@ def active_boxes_for_entry(entry: dict) -> list[dict]:
 
 def box_caption(box_entry: dict) -> str:
     if box_entry["class_name"] != PENDING_CLASS_NAME:
+        score = box_entry.get("model_score")
+        prediction = box_entry.get("model_prediction")
+        if score is not None and prediction == box_entry["class_name"]:
+            return f"{box_entry['class_name']} {float(score):.2f}"
+        if score is not None and prediction:
+            return f"{box_entry['class_name']} (FM {prediction} {float(score):.2f})"
         return box_entry["class_name"]
     hint_vehicle_type = box_entry.get("hint_vehicle_type")
     return f"? ({hint_vehicle_type})" if hint_vehicle_type else "?"
@@ -990,7 +1036,6 @@ def on_rectangle_selected(first_click, second_click) -> None:
         "hint_vehicle_type": None,
     })
     session_state["selected"] = len(entry["boxes"]) - 1
-    entry["reviewed"] = True
     commit_store()
     draw_frame()
     status_widget.value = status_html()
@@ -1043,10 +1088,21 @@ def go_previous(unused_button=None) -> None:
 
 
 def go_to_next_unlabeled(unused_button=None) -> None:
-    pending_stems = pending_boxes_in_reviewed_frames()
-    available_stems = [stem for stem in pending_stems if stem in frame_stem_order]
+    available_stems = [
+        record["frame_stem"]
+        for record in sample_records
+        if (
+            record.get("is_nb02d_proposal")
+            or any(
+                not box_entry.get("deleted", False)
+                and box_entry.get("class_name") == PENDING_CLASS_NAME
+                for box_entry in annotation_store["frames"][record["frame_stem"]].get("boxes", [])
+            )
+        )
+        and not annotation_store["frames"][record["frame_stem"]].get("reviewed", False)
+    ]
     if not available_stems:
-        status_widget.value = "Tidak ada frame unlabeled yang tersedia di manifest aktif."
+        status_widget.value = "Tidak ada proposal atau frame pending yang belum direview di manifest aktif."
         return
     current_stem = current_frame_stem()
     later_stems = [stem for stem in available_stems if stem > current_stem]
@@ -1055,7 +1111,19 @@ def go_to_next_unlabeled(unused_button=None) -> None:
 
 
 def mark_reviewed(unused_button=None) -> None:
-    annotation_store["frames"][current_frame_stem()]["reviewed"] = True
+    entry = annotation_store["frames"][current_frame_stem()]
+    unresolved_count = sum(
+        not box_entry.get("deleted", False)
+        and box_entry.get("class_name") == PENDING_CLASS_NAME
+        for box_entry in entry.get("boxes", [])
+    )
+    if unresolved_count:
+        status_widget.value = (
+            f"Frame belum bisa ditandai reviewed: masih ada {unresolved_count} bbox "
+            f"`{PENDING_CLASS_NAME}`. Ubah kelas atau hapus bbox tersebut dulu."
+        )
+        return
+    entry["reviewed"] = True
     commit_store()
     go_next()
 
@@ -1085,7 +1153,6 @@ def remove_selected(unused_button=None) -> None:
         return
     push_undo()
     entry["boxes"][selected_index]["deleted"] = True
-    entry["reviewed"] = True
     session_state["selected"] = None
     drop_orphan_selection()
     commit_store()
@@ -1119,7 +1186,6 @@ def apply_toggle_to_selection(unused_change=None) -> None:
     push_undo()
     entry["boxes"][selected_index]["class_name"] = selected_class
     entry["boxes"][selected_index]["source"] = BOX_SOURCE_EDITED
-    entry["reviewed"] = True
     commit_store()
     draw_frame()
     status_widget.value = status_html()
@@ -1140,7 +1206,7 @@ def show_selected_class_in_toggle() -> None:
 
 def on_key_press(event) -> None:
     key_actions = {
-        "n": go_next, "right": go_next,
+        "n": mark_reviewed, "right": go_next,
         "p": go_previous, "left": go_previous,
         "r": mark_reviewed, "s": skip_frame,
         "x": remove_selected, "delete": remove_selected,
@@ -1171,11 +1237,11 @@ class_toggle = ToggleButtons(options=CLASS_TOGGLE_LABELS, value=CLASS_TOGGLE_LAB
 class_toggle.observe(apply_toggle_to_selection, names="value")
 label_toggle_button = Button(description=label_toggle_description())
 previous_button = Button(description="Prev (p)")
-next_button = Button(description="Next (n)")
+next_button = Button(description="Next (?)")
 reviewed_button = Button(description="Reviewed (r)")
 delete_button = Button(description="Hapus (x)")
 undo_button = Button(description="Undo (u)")
-unlabeled_button = Button(description="Next unlabeled (f)")
+unlabeled_button = Button(description="Next to review (f)")
 status_widget = HTML(value=status_html())
 controls_box = VBox([
     HTML("<b>Kelas box terpilih — hotkey 1-9</b>"), class_toggle,
@@ -1194,7 +1260,7 @@ display(controls_box)
 go_to_index(0)
 display(Markdown(
     "Drag = box baru · klik box = pilih · **1-9** = set kelas · **x** = hapus · **u** = undo · "
-    "**n/p** = navigasi · **r** = reviewed + next · **T** = label ON/OFF. "
+    "**n**/**r**/tombol Reviewed menerima frame dan lanjut jika tidak ada bbox `BelumDitentukan` ? **p** = sebelumnya ? panah kanan/tombol Next = navigasi tanpa menerima frame ? **T** = label ON/OFF. "
     "Autosave tiap perubahan ke `annotations.json`.\\n\\n"
     "**Catatan teknis.** `RectangleSelector` dibuat dengan `interactive=False`, sehingga matplotlib "
     "3.9+ tidak membuat atribut handle internalnya (`_corner_order`, `_active_handle`). Atribut itu "
@@ -1355,6 +1421,7 @@ def write_yolo_gold_set(records: list[dict]) -> tuple[dict, list[dict]]:
         raise ValueError("hasil export YOLO tidak lengkap; status tetap in_progress dan NB04 akan menolak dataset")
     (staging_root / "split_map.csv").write_text("\\n".join(split_lines) + "\\n", encoding="utf-8")
     summary = {
+        "class_names": TRAINING_CLASS_NAMES,
         "gold_images": len(list(staging_image_dir.glob("*.png"))),
         "gold_labels": label_file_count,
         "gold_boxes": sum(label_counts_by_class.values()),
@@ -1466,7 +1533,7 @@ for class_name in TRAINING_CLASS_NAMES:
 display(Markdown("## Export hasil anotasi\\n" + "\\n".join(summary_table_lines)))
 display(Markdown("### Box per kelas anotasi\\n" + "\\n".join(class_table_lines)))
 display(Markdown(
-    "### Box per kelas latih\\nKelas kondisi kendaraan dipetakan ke Mobil/Motor; PantulanCahaya menjadi kelas deteksi ketiga YOLO.\\n\\n"
+    "### Box per kelas latih\\nSemua lima kelas berstatus reviewed menjadi kelas target eksplisit YOLO dan FM.\\n\\n"
     + "\\n".join(training_table_lines)
 ))
 display(Markdown(

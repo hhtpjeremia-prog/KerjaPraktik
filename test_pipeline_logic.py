@@ -23,6 +23,7 @@ from pipeline_common import (
     COUNT_CONTRACT,
     TRAINING_CLASS_NAMES,
     box_overlap_iou,
+    detect_center_line_crossing,
     filter_store_frames,
     stitch_track_fragments,
     training_class_name,
@@ -73,16 +74,25 @@ def count_vehicles(track_rows: list[dict]) -> int:
 
 
 def check_contract_rollup_is_complete() -> None:
-    assert COUNT_CONTRACT["jumlah_bbox_mobil_tidak_standar"] == ["MobilTidakStandar"]
-    assert COUNT_CONTRACT["jumlah_bbox_motor_tidak_standar"] == ["MotorTidakStandar"]
+    assert COUNT_CONTRACT["jumlah_kendaraan_mobil_tidak_standar_melintasi_garis"] == ["MobilTidakStandar"]
+    assert COUNT_CONTRACT["jumlah_kendaraan_motor_tidak_standar_melintasi_garis"] == ["MotorTidakStandar"]
     for contract_key, contract_classes in COUNT_CONTRACT.items():
         unknown_classes = [class_name for class_name in contract_classes if class_name not in CLASS_NAMES]
         assert not unknown_classes, f"{contract_key} memuat kelas tak dikenal: {unknown_classes}"
-    assert set(COUNT_CONTRACT) == {"jumlah_bbox_mobil_tidak_standar", "jumlah_bbox_motor_tidak_standar"}
+    assert set(COUNT_CONTRACT) == {
+        "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis",
+        "jumlah_kendaraan_motor_tidak_standar_melintasi_garis",
+    }
 
 
 def check_box_contract_partitions_all_classes() -> None:
-    assert BOX_COUNT_CONTRACT == {"jumlah_bbox_mobil": ["Mobil"], "jumlah_bbox_motor": ["Motor"]}
+    assert BOX_COUNT_CONTRACT == {
+        "jumlah_bbox_mobil_standar": ["MobilStandar"],
+        "jumlah_bbox_mobil_tidak_standar": ["MobilTidakStandar"],
+        "jumlah_bbox_motor_standar": ["MotorStandar"],
+        "jumlah_bbox_motor_tidak_standar": ["MotorTidakStandar"],
+        "jumlah_bbox_pantulan_cahaya": ["PantulanCahaya"],
+    }
     assert set(CLASS_NAMES) == {
         "MobilStandar", "MobilTidakStandar", "MotorStandar", "MotorTidakStandar", "PantulanCahaya"
     }
@@ -138,8 +148,55 @@ def check_chain_of_fragments_stitched() -> None:
     assert vehicles_counted == 1, f"rantai fragmen tidak menyatu: {vehicles_counted} kendaraan"
 
 
+def check_line_crossings_and_fragment_stitching() -> None:
+    track_rows = [
+        build_track_row(1, "MobilTidakStandar", 1, 4, (20, 20, 60, 40), (20, 60, 60, 80)),
+        build_track_row(2, "MotorTidakStandar", 1, 4, (220, 20, 260, 40), (220, 25, 260, 45)),
+        build_track_row(3, "MotorTidakStandar", 1, 4, (320, 60, 360, 80), (320, 20, 360, 40)),
+        build_track_row(4, "MotorTidakStandar", 1, 2, (100, 20, 150, 40), (100, 34, 150, 54)),
+        build_track_row(5, "MotorTidakStandar", 4, 5, (100, 46, 150, 66), (100, 60, 150, 80)),
+    ]
+    track_frame = pd.DataFrame(track_rows, columns=TRACK_COLUMNS)
+    assignments = stitch_track_fragments(track_frame)
+    track_to_vehicle = assignments.set_index("track_id")["vehicle_id"].to_dict()
+    assert track_to_vehicle[4] == track_to_vehicle[5], track_to_vehicle
+
+    observations_by_vehicle = {}
+    y_centers = {
+        1: [25, 35, 65, 75],
+        2: [25, 30, 35, 40],
+        3: [75, 65, 35, 25],
+        4: [38, 44],
+        5: [56, 62],
+    }
+    frame_numbers = {1: [1, 2, 3, 4], 2: [1, 2, 3, 4], 3: [1, 2, 3, 4], 4: [1, 2], 5: [4, 5]}
+    for track_id, centers in y_centers.items():
+        vehicle_id = track_to_vehicle[track_id]
+        for frame_index, center_y in zip(frame_numbers[track_id], centers):
+            observations_by_vehicle.setdefault(vehicle_id, []).append({
+                "frame_index": frame_index,
+                "frame_x1": 100.0 if track_id >= 4 else float(track_id * 100),
+                "frame_y1": float(center_y - 10),
+                "frame_x2": 140.0 if track_id >= 4 else float(track_id * 100 + 40),
+                "frame_y2": float(center_y + 10),
+                "track_id": track_id,
+            })
+    crossings = {
+        vehicle_id: detect_center_line_crossing(
+            observations,
+            line_y=50,
+            line_x1=0,
+            line_x2=400,
+            hysteresis=3,
+            min_hits=3,
+        )
+        for vehicle_id, observations in observations_by_vehicle.items()
+    }
+    assert sum(crossing is not None for crossing in crossings.values()) == 3, crossings
+
+
 def check_reflection_is_excluded_from_detector() -> None:
-    assert training_class_name("PantulanCahaya") is None
+    assert training_class_name("PantulanCahaya") == "PantulanCahaya"
 
 
 def check_tracker_threshold_guard() -> None:
@@ -158,12 +215,9 @@ def check_iou_bounds() -> None:
 
 
 def check_training_class_names() -> None:
-    assert TRAINING_CLASS_NAMES == ["Mobil", "Motor"]
-    assert training_class_name("MobilStandar") == "Mobil"
-    assert training_class_name("MobilTidakStandar") == "Mobil"
-    assert training_class_name("MotorStandar") == "Motor"
-    assert training_class_name("MotorTidakStandar") == "Motor"
-    assert training_class_name("PantulanCahaya") is None
+    assert TRAINING_CLASS_NAMES == CLASS_NAMES
+    assert all(training_class_name(name) == name for name in CLASS_NAMES)
+    assert training_class_name("kelas_tidak_dikenal") is None
 
 
 def check_attributes_features_are_finite() -> None:
@@ -212,52 +266,53 @@ def check_dashboard_camera_table_sums_per_camera() -> None:
             {
                 "video_stem": "video_a",
                 "camera_id": "bogor-kab-pdam2",
-                "bbox_counted": 4,
+                "crossings_counted": 4,
                 "MobilStandar": 7,
                 "MobilTidakStandar": 3,
                 "MotorStandar": 5,
                 "MotorTidakStandar": 1,
                 "PantulanCahaya": 0,
-                "jumlah_bbox_mobil_tidak_standar": 3,
-                "jumlah_bbox_motor_tidak_standar": 1,
+                "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis": 3,
+                "jumlah_kendaraan_motor_tidak_standar_melintasi_garis": 1,
             },
             {
                 "video_stem": "video_b",
                 "camera_id": "bogor-kab-pdam2",
-                "bbox_counted": 2,
+                "crossings_counted": 2,
                 "MobilStandar": 2,
                 "MobilTidakStandar": 2,
                 "MotorStandar": 0,
                 "MotorTidakStandar": 0,
                 "PantulanCahaya": 0,
-                "jumlah_bbox_mobil_tidak_standar": 2,
-                "jumlah_bbox_motor_tidak_standar": 0,
+                "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis": 2,
+                "jumlah_kendaraan_motor_tidak_standar_melintasi_garis": 0,
             },
             {
                 "video_stem": "video_c",
                 "camera_id": "bogor-kab-bappenda2",
-                "bbox_counted": 5,
+                "crossings_counted": 5,
                 "MobilStandar": 1,
                 "MobilTidakStandar": 1,
                 "MotorStandar": 1,
                 "MotorTidakStandar": 4,
                 "PantulanCahaya": 0,
-                "jumlah_bbox_mobil_tidak_standar": 1,
-                "jumlah_bbox_motor_tidak_standar": 4,
+                "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis": 1,
+                "jumlah_kendaraan_motor_tidak_standar_melintasi_garis": 4,
             },
         ]
     )
     camera_table = build_camera_table(per_video_frame)
     camera_totals = camera_table.set_index("camera_id")
-    assert camera_totals.loc["bogor-kab-pdam2", "bbox_counted"] == 6
+    assert camera_totals.loc["bogor-kab-pdam2", "crossings_counted"] == 6
     assert camera_totals.loc["bogor-kab-pdam2", "videos_counted"] == 2
-    assert camera_totals.loc["bogor-kab-bappenda2", "jumlah_bbox_motor_tidak_standar"] == 4
-    assert "jumlah_bbox_mobil_tidak_standar" in camera_table.columns
+    assert camera_totals.loc["bogor-kab-bappenda2", "jumlah_kendaraan_motor_tidak_standar_melintasi_garis"] == 4
+    assert "MobilStandar" in camera_table.columns
+    assert len(camera_table.columns) == len(set(camera_table.columns))
     status_frame = build_camera_status_table(camera_table, ["test"])
     status_by_camera = status_frame.set_index("camera_id")
     assert status_by_camera.loc["bogor-kab-pdam2", "status"] == CAMERA_STATUS_COUNTED
     assert "di luar split hitung (train)" in status_by_camera.loc["bogor-kab-bappenda1", "status"]
-    assert pd.isna(status_by_camera.loc["bogor-kab-bappenda1", "bbox_counted"])
+    assert pd.isna(status_by_camera.loc["bogor-kab-bappenda1", "crossings_counted"])
 
 
 def main() -> None:
@@ -270,6 +325,7 @@ def main() -> None:
         check_gap_beyond_limit_rejected,
         check_adjacent_fragments_stitched,
         check_chain_of_fragments_stitched,
+        check_line_crossings_and_fragment_stitching,
         check_reflection_is_excluded_from_detector,
         check_tracker_threshold_guard,
         check_iou_bounds,

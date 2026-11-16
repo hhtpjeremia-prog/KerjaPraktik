@@ -16,7 +16,7 @@ VIDEOS = OUTPUT / "videos"
 FRAMES = OUTPUT / "frames"
 MANIFESTS = OUTPUT / "manifests"
 BACKUP = MANIFESTS / f"manifest_backup_{datetime.now():%Y%m%d_%H%M%S}"
-FRAME_NUMBER = re.compile(r"frame_(\d+)\.png$")
+FRAME_NUMBER = re.compile(r"frame_(\d+)\.(?:png|jpe?g)$", re.IGNORECASE)
 
 
 def project_relative(value: str) -> str:

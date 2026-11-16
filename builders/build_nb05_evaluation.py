@@ -73,11 +73,10 @@ import cv2
 import torch
 from IPython.display import Markdown, display
 
-from pipeline_common import TRAINING_CLASS_NAMES, training_class_name
+from pipeline_common import BOX_COUNT_CONTRACT, TRAINING_CLASS_NAMES, training_class_name
 
-RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
-    raise RuntimeError("Set RISET_PROJECT_ROOT ke root proyek atau jalankan notebook dari root proyek.")
+from pipeline_common import resolve_project_root
+RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT_ROOT = RISET_ROOT / "output"
 SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"
 DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
@@ -454,7 +453,10 @@ for camera_id in sorted(counting_frames["camera_id"].unique()):
     per_camera_rows.append({
         "camera_id": camera_id,
         "frames": int(counting_frames.loc[counting_frames["camera_id"] == camera_id, "frame_stem"].nunique()),
-        **{f"jumlah_bbox_{class_name.lower()}": camera_class_counts[class_name] for class_name in TRAINING_CLASS_NAMES},
+        **{
+            contract_key: sum(camera_class_counts[class_name] for class_name in class_names)
+            for contract_key, class_names in BOX_COUNT_CONTRACT.items()
+        },
     })
 per_camera_frame = pd.DataFrame(per_camera_rows)
 per_camera_frame.to_csv(COUNTING_BY_CAMERA_PATH, index=False)
@@ -500,7 +502,10 @@ counting_summary_payload = {
     "frames_counted": int(len(counting_frames)),
     "counted_boxes": int(len(counted_box_frame)),
     "class_counts": class_counts,
-    "box_totals": {f"jumlah_bbox_{name.lower()}": value for name, value in class_counts.items()},
+    "box_totals": {
+        contract_key: sum(class_counts[class_name] for class_name in class_names)
+        for contract_key, class_names in BOX_COUNT_CONTRACT.items()
+    },
     "selected_thresholds": selected_thresholds,
     "counting_unit": "box_per_frame",
     "unit_note": (

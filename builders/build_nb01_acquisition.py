@@ -33,9 +33,8 @@ from IPython.display import Markdown, display
 
 from pipeline_common import SPLIT_NAME_BY_CAMERA
 
-RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
-    raise RuntimeError("Set RISET_PROJECT_ROOT ke root proyek atau jalankan notebook dari root proyek.")
+from pipeline_common import resolve_project_root
+RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT_ROOT = RISET_ROOT / "output"
 KATALOG_DIR = OUTPUT_ROOT / "katalog"
 VIDEO_DIR = OUTPUT_ROOT / "videos"
@@ -70,8 +69,8 @@ FFMPEG_EXECUTABLE = shutil.which("ffmpeg")
 FFMPEG_NETWORK_TIMEOUT_MICROSECONDS = 10000000
 FFMPEG_RECONNECT_DELAY_MAX_SECONDS = 10
 
-SAMPLE_INTERVAL_FRAMES = 15
-FRAME_RETENTION_MIN_SECONDS = 5
+SAMPLE_INTERVAL_SECONDS = 5.0
+FRAME_JPEG_QUALITY = 90
 
 MISSING_SPLIT_CAMERAS = [camera_id for camera_id in TARGET_CAMERA_IDS if camera_id not in SPLIT_NAME_BY_CAMERA]
 
@@ -220,9 +219,14 @@ from pathlib import Path
 import cv2
 
 
-def sample_frames_from_video(video_path: Path, output_dir: Path, interval_frames: int) -> list[Path]:
+def sample_frames_from_video(video_path: Path, output_dir: Path, interval_seconds: float) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     video_capture = cv2.VideoCapture(str(video_path))
+    fps = float(video_capture.get(cv2.CAP_PROP_FPS))
+    if fps <= 0:
+        video_capture.release()
+        raise ValueError(f"FPS tidak valid untuk video: {video_path}")
+    interval_frames = max(1, round(fps * interval_seconds))
     sampled_frame_paths: list[Path] = []
     frame_index = 0
     while True:
@@ -230,8 +234,8 @@ def sample_frames_from_video(video_path: Path, output_dir: Path, interval_frames
         if not frame_ok:
             break
         if frame_index % interval_frames == 0:
-            frame_path = output_dir / f"frame_{frame_index:06d}.png"
-            cv2.imwrite(str(frame_path), frame)
+            frame_path = output_dir / f"frame_{frame_index:06d}.jpg"
+            cv2.imwrite(str(frame_path), frame, [cv2.IMWRITE_JPEG_QUALITY, FRAME_JPEG_QUALITY])
             sampled_frame_paths.append(frame_path)
         frame_index += 1
     video_capture.release()
@@ -253,7 +257,7 @@ def run_sampling(video_manifest_path: Path, frames_root: Path) -> tuple[dict[str
     with video_manifest_path.open(encoding="utf-8") as manifest_file:
         for manifest_row in csv.DictReader(manifest_file):
             video_path = Path(manifest_row["video_path"])
-            sampled_frames = sample_frames_from_video(video_path, frames_root / video_path.stem, SAMPLE_INTERVAL_FRAMES)
+            sampled_frames = sample_frames_from_video(video_path, frames_root / video_path.stem, SAMPLE_INTERVAL_SECONDS)
             frames_by_video[manifest_row["video_path"]] = sampled_frames
             if not sampled_frames:
                 empty_video_rows.append(f"{manifest_row['camera_id']} ({video_path.name})")
@@ -282,6 +286,7 @@ import cv2
 import numpy as np
 
 from IPython.display import Markdown, display
+from pipeline_common import difference_hash, near_duplicate_flags
 
 HASH_IMAGE_SIZE = (9, 8)
 DUPLICATE_WINDOW_FRAMES = 1
@@ -289,18 +294,16 @@ DUPLICATE_HASH_DISTANCE = 4
 
 
 def frame_dhash(frame, hash_image_size: tuple[int, int]) -> int:
-    resized_frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), hash_image_size, interpolation=cv2.INTER_AREA)
-    pixel_row = resized_frame.astype(int)
-    row_diff = pixel_row[:, 1:] >= pixel_row[:, :-1]
-    return sum(1 << bit_index for bit_index, bit_value in enumerate(row_diff.flatten()) if bit_value)
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return difference_hash(gray_frame, hash_image_size)
 
 
 def duplicate_flags(frame_hashes: list[int]) -> list[bool]:
-    flags = []
-    for index, current_hash in enumerate(frame_hashes):
-        previous_hashes = frame_hashes[max(0, index - DUPLICATE_WINDOW_FRAMES):index]
-        flags.append(any((current_hash ^ previous_hash).bit_count() <= DUPLICATE_HASH_DISTANCE for previous_hash in previous_hashes if previous_hash >= 0))
-    return flags
+    return near_duplicate_flags(
+        frame_hashes,
+        window_frames=DUPLICATE_WINDOW_FRAMES,
+        distance_threshold=DUPLICATE_HASH_DISTANCE,
+    )
 
 
 def build_dedup_manifest(frame_manifest_path: Path, dedup_manifest_path: Path) -> None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Latih ResNet18 supervised untuk Standar/TidakStandar/PantulanCahaya."""
+"""Train the five-class CNN with SAM2 mask features and train-only e-means."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
+from PIL import ImageOps
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
@@ -24,20 +25,23 @@ from attribute_classifier import (  # noqa: E402
     ATTRIBUTE_BY_ANNOTATION_CLASS,
     ATTRIBUTE_NAMES,
     AttributeFusionCNN,
-    FEATURE_SIZE,
+    EMEANS_CLUSTER_COUNT,
+    EMEANS_EPOCHS,
+    EMEANS_SEED,
     IMAGE_TRANSFORM,
+    MASK_FEATURE_VERSION,
+    MODEL_NUMERIC_FEATURE_SIZE,
     extract_image_crop,
-    extract_pixel_features,
+    extract_mask_aware_features,
+    mask_cache_key,
     save_classifier,
 )
+from feature_clustering import assign_e_means_clusters, cluster_one_hot, fit_e_means  # noqa: E402
 
 ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 OUTPUT = ROOT / "output"
 ANNOTATION = OUTPUT / "annotation"
 MODEL_DIR = OUTPUT / "attribute_classifier"
-HISTORY_PATH = MODEL_DIR / "training_history.csv"
-PLOT_PATH = MODEL_DIR / "training_curves.png"
-METRICS_PATH = MODEL_DIR / "metrics.json"
 SEED = 20261102
 EPOCHS = int(os.environ.get("ATTRIBUTE_EPOCHS", "40"))
 BATCH_SIZE = 32
@@ -48,74 +52,150 @@ MIN_VAL_PER_CLASS = 5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 TRAIN_AUGMENT = transforms.Compose([
-    transforms.RandomHorizontalFlip(p=0.5),
     transforms.ColorJitter(brightness=0.20, contrast=0.20, saturation=0.08, hue=0.0),
 ])
+MASK_CENTROID_X_FEATURE = 35 + 35 + 3
+
+
 @dataclass(frozen=True)
 class Example:
     image_path: Path
     box: tuple[float, float, float, float]
     label: int
     split: str
+    mask_id: str
+    mask_path: Path
+    source: str
 
 
 class CropDataset(Dataset):
-    def __init__(self, examples: list[Example], training: bool = False) -> None:
+    def __init__(
+        self,
+        examples: list[Example],
+        features_by_mask: dict[str, np.ndarray],
+        clusters_by_mask: dict[str, np.ndarray],
+        cluster_centroids: np.ndarray,
+        mirror_feature_offset: float,
+        training: bool = False,
+    ) -> None:
         self.examples = examples
+        self.features_by_mask = features_by_mask
+        self.clusters_by_mask = clusters_by_mask
+        self.cluster_centroids = cluster_centroids
+        self.mirror_feature_offset = float(mirror_feature_offset)
         self.training = training
 
     def __len__(self) -> int:
         return len(self.examples)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, ...]:
         example = self.examples[index]
         with Image.open(example.image_path) as image:
             crop = extract_image_crop(image, list(example.box))
-        # Numerical photometry uses the clean crop in both train and inference.
-        # Color jitter augments only the CNN image branch.
-        features = extract_pixel_features(crop, [0, 0, crop.width, crop.height])
+        features = self.features_by_mask[example.mask_id]
+        cluster_features = self.clusters_by_mask[example.mask_id]
+        if self.training and random.random() < 0.5:
+            crop = ImageOps.mirror(crop)
+            features = features.copy()
+            features[MASK_CENTROID_X_FEATURE] = self.mirror_feature_offset - features[MASK_CENTROID_X_FEATURE]
+            cluster_id = assign_e_means_clusters(features[None, :], self.cluster_centroids)
+            cluster_features = cluster_one_hot(cluster_id, len(self.cluster_centroids))[0]
         if self.training:
             crop = TRAIN_AUGMENT(crop)
-        return IMAGE_TRANSFORM(crop), torch.from_numpy(features), torch.tensor(example.label, dtype=torch.long)
+        return (
+            IMAGE_TRANSFORM(crop),
+            torch.from_numpy(features),
+            torch.from_numpy(cluster_features),
+            torch.tensor(example.label, dtype=torch.long),
+        )
 
 
-def resolve_image_path(path_value: str | Path) -> Path:
-    image_path = Path(path_value)
-    if image_path.exists():
-        return image_path
-    if "output" in image_path.parts:
-        candidate = ROOT / Path(*image_path.parts[image_path.parts.index("output"):])
+def resolve_path(value: str | Path) -> Path:
+    path = Path(value)
+    candidates = [path, ROOT / path]
+    if "output" in path.parts:
+        candidates.append(ROOT / Path(*path.parts[path.parts.index("output"):]))
+    for candidate in candidates:
         if candidate.exists():
-            return candidate
-    candidate = ROOT / image_path
-    if candidate.exists():
-        return candidate
-    raise FileNotFoundError(f"gambar anotasi tidak ditemukan: {path_value}")
+            return candidate.resolve()
+    raise FileNotFoundError(f"file input tidak ditemukan: {value}")
 
 
-def load_examples() -> list[Example]:
+def load_examples(*, include_test: bool = True) -> tuple[list[Example], set[str], dict]:
+    mask_manifest_path = OUTPUT / "nb02e_feature_masks" / "mask_manifest.json"
+    if not mask_manifest_path.exists():
+        raise FileNotFoundError(f"Manifest mask belum ada: {mask_manifest_path}. Jalankan NB02e sampai complete.")
+    mask_payload = json.loads(mask_manifest_path.read_text(encoding="utf-8"))
+    if mask_payload.get("schema_version") != 2 or mask_payload.get("status") != "complete":
+        raise RuntimeError("NB04b memerlukan mask manifest skema 2 berstatus complete; output preview tidak cukup.")
+    mask_items = mask_payload.get("items", {})
     examples: list[Example] = []
+    reviewed_stems: set[str] = set()
     sources = [
-        (ANNOTATION / "sample_manifest.json", ANNOTATION / "annotations.json", False),
-        (OUTPUT / "ground_truth" / "sample_manifest.json", OUTPUT / "ground_truth" / "annotations.json", True),
+        (ANNOTATION / "sample_manifest.json", ANNOTATION / "annotations.json", None, "human_annotation"),
+        (OUTPUT / "ground_truth" / "sample_manifest.json", OUTPUT / "ground_truth" / "annotations.json", "test", "gold_test"),
     ]
-    for manifest_path, store_path, is_test_gt in sources:
+    for manifest_path, store_path, split_override, source_name in sources:
+        if split_override == "test" and not include_test:
+            continue
         if not manifest_path.exists() or not store_path.exists():
             continue
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         store = json.loads(store_path.read_text(encoding="utf-8"))
         for record in manifest.get("frames", []):
-            entry = store.get("frames", {}).get(record["frame_stem"])
+            frame_stem = record["frame_stem"]
+            entry = store.get("frames", {}).get(frame_stem)
             if not entry or not entry.get("reviewed"):
                 continue
-            image_path = resolve_image_path(record["image_path"])
-            split = "test" if is_test_gt else record.get("split", store.get("split_by_camera", {}).get(record["camera_id"], "unknown"))
-            for box in entry.get("boxes", []):
-                class_name = box.get("class_name")
-                if box.get("deleted") or class_name not in ATTRIBUTE_BY_ANNOTATION_CLASS:
+            reviewed_stems.add(frame_stem)  # Includes reviewed-empty images; suppress pseudo labels too.
+            split = split_override or record.get(
+                "split", store.get("split_by_camera", {}).get(record.get("camera_id"), "unknown")
+            )
+            if split_override is None and split not in {"train", "val"}:
+                raise ValueError(
+                    f"Frame anotasi manual {frame_stem} memiliki split {split!r}; "
+                    "NB04b hanya menerima manual train/val dan GT dari store terpisah."
+                )
+            image_path = resolve_path(record["image_path"])
+            for box_entry in entry.get("boxes", []):
+                class_name = box_entry.get("class_name")
+                if box_entry.get("deleted") or class_name not in ATTRIBUTE_BY_ANNOTATION_CLASS:
                     continue
-                examples.append(Example(image_path, tuple(float(value) for value in box["box"]), int(ATTRIBUTE_BY_ANNOTATION_CLASS[class_name]), split))
-    return examples
+                box = tuple(float(v) for v in box_entry["box"])
+                mask_id = mask_cache_key(frame_stem, list(box))
+                mask_record = mask_items.get(mask_id)
+                if mask_record is None:
+                    raise FileNotFoundError(f"Mask SAM2 tidak ada: {frame_stem}, bbox={box}")
+                examples.append(Example(
+                    image_path=image_path, box=box,
+                    label=int(ATTRIBUTE_BY_ANNOTATION_CLASS[class_name]), split=split,
+                    mask_id=mask_id, mask_path=resolve_path(mask_record["mask_path"]), source=source_name,
+                ))
+
+    proposal_path = OUTPUT / "nb02d_fiveclass" / "base" / "proposal_manifest.json"
+    if proposal_path.exists():
+        proposals = json.loads(proposal_path.read_text(encoding="utf-8"))
+        if proposals.get("status") != "complete":
+            raise RuntimeError("Proposal NB02d belum complete; NB04b menolak pseudo-label parsial.")
+        for record in proposals.get("frames", []):
+            if record.get("split") != "train" or record["frame_stem"] in reviewed_stems:
+                continue
+            for detection in record.get("detections", []):
+                class_name = detection.get("class_name")
+                if class_name not in ATTRIBUTE_BY_ANNOTATION_CLASS:
+                    raise ValueError(f"Kelas pseudo-label tidak dikenal: {record['frame_stem']}: {class_name}")
+                box = tuple(float(v) for v in detection["box"])
+                mask_id = mask_cache_key(record["frame_stem"], list(box))
+                mask_record = mask_items.get(mask_id)
+                if mask_record is None:
+                    raise FileNotFoundError(f"Mask pseudo train tidak ada: {record['frame_stem']}, bbox={box}")
+                examples.append(Example(
+                    image_path=resolve_path(record["image_path"]), box=box,
+                    label=int(ATTRIBUTE_BY_ANNOTATION_CLASS[class_name]), split="train",
+                    mask_id=mask_id, mask_path=resolve_path(mask_record["mask_path"]),
+                    source="grounding_dino_pseudo",
+                ))
+    return examples, reviewed_stems, mask_payload
 
 
 def set_backbone_trainable(model: AttributeFusionCNN, trainable: bool) -> None:
@@ -129,46 +209,42 @@ def calculate_metrics(logits: torch.Tensor, labels: torch.Tensor, loss: float) -
     probabilities = torch.softmax(logits, dim=1)
     truth = labels.reshape(-1).long()
     prediction = probabilities.argmax(dim=1)
-    class_precision, class_recall, class_f1, class_support = [], [], [], []
+    precision, recall, f1, support = [], [], [], []
     for class_index in range(len(ATTRIBUTE_NAMES)):
-        true_positive = int(((prediction == class_index) & (truth == class_index)).sum())
-        false_positive = int(((prediction == class_index) & (truth != class_index)).sum())
-        false_negative = int(((prediction != class_index) & (truth == class_index)).sum())
-        precision_value = true_positive / max(true_positive + false_positive, 1)
-        recall_value = true_positive / max(true_positive + false_negative, 1)
-        class_precision.append(precision_value)
-        class_recall.append(recall_value)
-        class_f1.append(2 * precision_value * recall_value / max(precision_value + recall_value, 1e-9))
-        class_support.append(int((truth == class_index).sum()))
+        tp = int(((prediction == class_index) & (truth == class_index)).sum())
+        fp = int(((prediction == class_index) & (truth != class_index)).sum())
+        fn = int(((prediction != class_index) & (truth == class_index)).sum())
+        p = tp / max(tp + fp, 1)
+        r = tp / max(tp + fn, 1)
+        precision.append(p)
+        recall.append(r)
+        f1.append(2 * p * r / max(p + r, 1e-9))
+        support.append(int((truth == class_index).sum()))
     one_hot_truth = torch.nn.functional.one_hot(truth, num_classes=len(ATTRIBUTE_NAMES)).float()
-    brier_mse = torch.mean((probabilities - one_hot_truth) ** 2)
+    brier = torch.mean((probabilities - one_hot_truth) ** 2)
     return {
-        "loss": float(loss),
-        "brier_mse": float(brier_mse),
-        "brier_rmse": float(torch.sqrt(brier_mse)),
+        "loss": float(loss), "brier_mse": float(brier), "brier_rmse": float(torch.sqrt(brier)),
         "accuracy": float((prediction == truth).float().mean()),
-        "precision_macro": float(np.mean(class_precision)),
-        "recall_macro": float(np.mean(class_recall)),
-        "f1_macro": float(np.mean(class_f1)),
-        **{f"precision_{name}": class_precision[index] for index, name in enumerate(ATTRIBUTE_NAMES)},
-        **{f"recall_{name}": class_recall[index] for index, name in enumerate(ATTRIBUTE_NAMES)},
-        **{f"support_{name}": class_support[index] for index, name in enumerate(ATTRIBUTE_NAMES)},
+        "precision_macro": float(np.mean(precision)), "recall_macro": float(np.mean(recall)),
+        "f1_macro": float(np.mean(f1)),
+        **{f"precision_{name}": precision[i] for i, name in enumerate(ATTRIBUTE_NAMES)},
+        **{f"recall_{name}": recall[i] for i, name in enumerate(ATTRIBUTE_NAMES)},
+        **{f"support_{name}": support[i] for i, name in enumerate(ATTRIBUTE_NAMES)},
         "support": len(truth),
     }
 
 
-def evaluate(model: AttributeFusionCNN, loader: DataLoader | None, loss_function: nn.Module, feature_mean: np.ndarray, feature_std: np.ndarray) -> dict[str, float] | None:
+def evaluate(model, loader, loss_function) -> dict[str, float] | None:
     if loader is None:
         return None
     model.eval()
     logits_rows, label_rows = [], []
-    total_loss = 0.0
-    total_items = 0
+    total_loss = total_items = 0
     with torch.no_grad():
-        for images, features, labels in loader:
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            features = ((features.numpy() - feature_mean) / feature_std).astype(np.float32)
-            logits = model(images, torch.from_numpy(features).to(DEVICE))
+        for images, features, clusters, labels in loader:
+            images, features = images.to(DEVICE), features.to(DEVICE)
+            clusters, labels = clusters.to(DEVICE), labels.to(DEVICE)
+            logits = model(images, features, clusters)
             loss = loss_function(logits, labels)
             total_loss += float(loss) * len(labels)
             total_items += len(labels)
@@ -179,87 +255,108 @@ def evaluate(model: AttributeFusionCNN, loader: DataLoader | None, loss_function
     return calculate_metrics(torch.cat(logits_rows), torch.cat(label_rows), total_loss / max(total_items, 1))
 
 
-def main() -> None:
+def prepare_feature_encodings(examples: list[Example]):
+    raw_by_mask: dict[str, np.ndarray] = {}
+    for example in examples:
+        if example.mask_id in raw_by_mask:
+            continue
+        with Image.open(example.image_path) as image:
+            raw_by_mask[example.mask_id] = extract_mask_aware_features(
+                image, list(example.box), example.mask_path
+            )
+    if any(len(values) != MODEL_NUMERIC_FEATURE_SIZE for values in raw_by_mask.values()):
+        raise ValueError("Dimensi fitur mask-aware berubah; periksa versi feature extractor.")
+    train_mask_ids = list(dict.fromkeys(example.mask_id for example in examples if example.split == "train"))
+    train_matrix = np.stack([raw_by_mask[key] for key in train_mask_ids]).astype(np.float32)
+    mean = train_matrix.mean(axis=0).astype(np.float32)
+    std = np.maximum(train_matrix.std(axis=0), 1e-6).astype(np.float32)
+    normalized = {key: ((value - mean) / std).astype(np.float32) for key, value in raw_by_mask.items()}
+    train_normalized = np.stack([normalized[key] for key in train_mask_ids])
+    centroids, _, cluster_metadata = fit_e_means(
+        train_normalized,
+        n_clusters=min(EMEANS_CLUSTER_COUNT, len(train_mask_ids)),
+        epochs=EMEANS_EPOCHS,
+        seed=EMEANS_SEED,
+    )
+    train_labels = assign_e_means_clusters(train_normalized, centroids)
+    labels_by_mask = assign_e_means_clusters(np.stack(list(normalized.values())), centroids)
+    onehots = cluster_one_hot(labels_by_mask, len(centroids))
+    cluster_by_mask = dict(zip(normalized.keys(), onehots))
+    cluster_metadata["train_cluster_counts"] = {
+        str(index): int((train_labels == index).sum()) for index in range(len(centroids))
+    }
+    cluster_metadata["fit_split"] = "train_only"
+    return mean, std, centroids, cluster_metadata, normalized, cluster_by_mask
+
+
+def main(*, output_dir: Path | None = None, include_test_eval: bool = True) -> None:
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
-    examples = load_examples()
-    train_examples = [example for example in examples if example.split == "train"]
-    val_examples = [example for example in examples if example.split == "val"]
-    test_examples = [example for example in examples if example.split == "test"]
-    if not train_examples or not val_examples:
-        raise RuntimeError("Classifier membutuhkan contoh train dan val.")
-    train_class_counts = {name: sum(example.label == index for example in train_examples) for index, name in enumerate(ATTRIBUTE_NAMES)}
-    val_class_counts = {name: sum(example.label == index for example in val_examples) for index, name in enumerate(ATTRIBUTE_NAMES)}
-    insufficient_train = {name: count for name, count in train_class_counts.items() if count < MIN_TRAIN_PER_CLASS}
-    insufficient_val = {name: count for name, count in val_class_counts.items() if count < MIN_VAL_PER_CLASS}
-    if insufficient_train or insufficient_val:
-        raise RuntimeError(
-            f"Sampel classifier kurang per kelas. Train: {insufficient_train}; validation: {insufficient_val}."
-        )
+    examples, _, mask_payload = load_examples(include_test=include_test_eval)
+    train = [example for example in examples if example.split == "train"]
+    val = [example for example in examples if example.split == "val"]
+    test = [example for example in examples if example.split == "test"] if include_test_eval else []
+    if not train or not val:
+        raise RuntimeError("CNN membutuhkan split train dan validation yang berisi box berlabel.")
+    train_counts = {name: sum(item.label == i for item in train) for i, name in enumerate(ATTRIBUTE_NAMES)}
+    val_counts = {name: sum(item.label == i for item in val) for i, name in enumerate(ATTRIBUTE_NAMES)}
+    low_train = {name: count for name, count in train_counts.items() if count < MIN_TRAIN_PER_CLASS}
+    low_val = {name: count for name, count in val_counts.items() if count < MIN_VAL_PER_CLASS}
+    if low_train or low_val:
+        raise RuntimeError(f"Sampel kelas kurang. Train={low_train}; validation={low_val}.")
 
-    train_loader = DataLoader(CropDataset(train_examples, training=True), batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-    val_loader = DataLoader(CropDataset(val_examples), batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-    test_loader = DataLoader(CropDataset(test_examples), batch_size=BATCH_SIZE, shuffle=False, num_workers=0) if test_examples else None
-    raw_features = []
-    for example in train_examples:
-        with Image.open(example.image_path) as image:
-            crop = extract_image_crop(image, list(example.box))
-            raw_features.append(extract_pixel_features(crop, [0, 0, crop.width, crop.height]))
-    feature_mean = np.mean(raw_features, axis=0).astype(np.float32)
-    feature_std = np.maximum(np.std(raw_features, axis=0), 1e-6).astype(np.float32)
+    feature_mean, feature_std, centroids, cluster_metadata, features_by_mask, clusters_by_mask = prepare_feature_encodings(examples)
+    mirror_offset = (1.0 - 2.0 * feature_mean[MASK_CENTROID_X_FEATURE]) / feature_std[MASK_CENTROID_X_FEATURE]
+    train_loader = DataLoader(CropDataset(train, features_by_mask, clusters_by_mask, centroids, mirror_offset, True), batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    val_loader = DataLoader(CropDataset(val, features_by_mask, clusters_by_mask, centroids, mirror_offset), batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    test_loader = DataLoader(CropDataset(test, features_by_mask, clusters_by_mask, centroids, mirror_offset), batch_size=BATCH_SIZE, shuffle=False, num_workers=0) if test else None
     try:
-        model = AttributeFusionCNN(pretrained=True).to(DEVICE)
+        model = AttributeFusionCNN(pretrained=True, cluster_count=len(centroids)).to(DEVICE)
         pretrained_source = "ImageNet"
     except Exception as error:
         print(f"Peringatan: bobot ImageNet tidak tersedia ({error}); memakai ResNet18 tanpa bobot awal.")
-        model = AttributeFusionCNN(pretrained=False).to(DEVICE)
+        model = AttributeFusionCNN(pretrained=False, cluster_count=len(centroids)).to(DEVICE)
         pretrained_source = "random_init_fallback"
-    set_backbone_trainable(model, False)
-    class_counts = train_class_counts
     class_weights = torch.tensor(
-        [len(train_examples) / (len(ATTRIBUTE_NAMES) * max(train_class_counts[name], 1)) for name in ATTRIBUTE_NAMES],
-        dtype=torch.float32,
-        device=DEVICE,
+        [len(train) / (len(ATTRIBUTE_NAMES) * max(train_counts[name], 1)) for name in ATTRIBUTE_NAMES],
+        dtype=torch.float32, device=DEVICE,
     )
     loss_function = nn.CrossEntropyLoss(weight=class_weights)
     print(json.dumps({
-        "model": "ResNet18",
-        "pretrained_source": pretrained_source,
-        "device": DEVICE,
-        "train_class_counts": class_counts,
-        "loss": "weighted CrossEntropyLoss",
-        "class_weights": {name: float(class_weights[index].item()) for index, name in enumerate(ATTRIBUTE_NAMES)},
+        "model": "ResNet18 + SAM2 mask-aware features + e-means",
+        "pretrained_source": pretrained_source, "device": DEVICE,
+        "train_class_counts": train_counts, "loss": "weighted CrossEntropyLoss",
+        "class_weights": {name: float(class_weights[i]) for i, name in enumerate(ATTRIBUTE_NAMES)},
+        "numeric_feature_size": MODEL_NUMERIC_FEATURE_SIZE, "e_means": cluster_metadata,
     }, indent=2, ensure_ascii=False))
-    optimizer = torch.optim.AdamW(filter(lambda parameter: parameter.requires_grad, model.parameters()), lr=LEARNING_RATE, weight_decay=1e-3)
-    best_state, best_val_loss = None, float("inf")
-    history_rows = []
+    set_backbone_trainable(model, False)
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=LEARNING_RATE, weight_decay=1e-3)
+    best_state, best_val_loss, history_rows = None, float("inf"), []
     for epoch in range(1, EPOCHS + 1):
         if epoch == WARMUP_HEAD_EPOCHS + 1:
             set_backbone_trainable(model, True)
             optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE * 0.25, weight_decay=1e-3)
         model.train()
         if epoch <= WARMUP_HEAD_EPOCHS:
-            # Freeze pretrained BatchNorm running statistics while only training the head.
             model.backbone.eval()
             model.head.train()
-        train_logits, train_labels = [], []
-        train_loss_total, train_items = 0.0, 0
-        for images, features, labels in train_loader:
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            features = ((features.numpy() - feature_mean) / feature_std).astype(np.float32)
-            features = torch.from_numpy(features).to(DEVICE)
-            optimizer.zero_grad()
-            logits = model(images, features)
+        logits_rows, labels_rows = [], []
+        loss_total = item_total = 0
+        for images, features, clusters, labels in train_loader:
+            images, features = images.to(DEVICE), features.to(DEVICE)
+            clusters, labels = clusters.to(DEVICE), labels.to(DEVICE)
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(images, features, clusters)
             loss = loss_function(logits, labels)
             loss.backward()
             optimizer.step()
-            train_loss_total += float(loss) * len(labels)
-            train_items += len(labels)
-            train_logits.append(logits.detach().cpu())
-            train_labels.append(labels.cpu())
-        train_metrics = calculate_metrics(torch.cat(train_logits), torch.cat(train_labels), train_loss_total / max(train_items, 1))
-        val_metrics = evaluate(model, val_loader, loss_function, feature_mean, feature_std)
+            loss_total += float(loss) * len(labels)
+            item_total += len(labels)
+            logits_rows.append(logits.detach().cpu())
+            labels_rows.append(labels.cpu())
+        train_metrics = calculate_metrics(torch.cat(logits_rows), torch.cat(labels_rows), loss_total / max(item_total, 1))
+        val_metrics = evaluate(model, val_loader, loss_function)
         row = {"epoch": epoch, "learning_rate": optimizer.param_groups[0]["lr"]}
         row.update({f"train_{key}": value for key, value in train_metrics.items()})
         row.update({f"val_{key}": value for key, value in val_metrics.items()})
@@ -268,60 +365,58 @@ def main() -> None:
             best_val_loss = val_metrics["loss"]
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
     if best_state is None:
-        raise RuntimeError("Tidak ada checkpoint valid dari training CNN.")
+        raise RuntimeError("Training tidak menghasilkan checkpoint validation yang valid.")
     model.load_state_dict(best_state)
-    test_metrics = evaluate(model, test_loader, loss_function, feature_mean, feature_std)
-    history_frame = pd.DataFrame(history_rows)
+    test_metrics = evaluate(model, test_loader, loss_function)
+    history = pd.DataFrame(history_rows)
     if test_metrics:
         for key, value in test_metrics.items():
-            history_frame[f"test_{key}"] = value
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    history_frame.to_csv(HISTORY_PATH, index=False)
+            history[f"test_{key}"] = value
+    model_dir = Path(output_dir) if output_dir is not None else MODEL_DIR
+    model_dir.mkdir(parents=True, exist_ok=True)
+    history_path = model_dir / "training_history.csv"
+    plot_path = model_dir / "training_curves.png"
+    history.to_csv(history_path, index=False)
     metadata = {
-        "model_type": "resnet18_hsv_fusion",
-        "numeric_feature_version": "pixel-hsv-v1",
-        "numeric_feature_size": FEATURE_SIZE,
+        "model_type": "resnet18_sam2_emeans_fusion_5class",
+        "numeric_feature_version": MASK_FEATURE_VERSION,
+        "numeric_feature_size": MODEL_NUMERIC_FEATURE_SIZE,
+        "numeric_feature_parts": {"bbox_photometry": 35, "sam2_foreground_photometry": 35, "mask_geometry": 7},
+        "augmentation": "horizontal flip with mask-centroid x mirrored consistently; ColorJitter on RGB branch",
+        "e_means": cluster_metadata,
+        "mask_source_signature": mask_payload.get("source_signature"),
         "input_size": [224, 224],
         "crop_resize": "preserve_aspect_ratio_longest_side_then_mean_padding",
-        "pixel_normalization": {
-            "to_tensor_range": [0.0, 1.0],
-            "mean": [0.485, 0.456, 0.406],
-            "std": [0.229, 0.224, 0.225],
-        },
+        "pixel_normalization": {"to_tensor_range": [0.0, 1.0], "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
         "pretrained_source": pretrained_source,
         "attribute_names": ATTRIBUTE_NAMES,
-        "train_examples": len(train_examples),
-        "val_examples": len(val_examples),
-        "test_examples": len(test_examples),
-        "class_counts": class_counts,
-        "class_counts_train": train_class_counts,
-        "class_counts_val": val_class_counts,
-        "loss": "weighted CrossEntropyLoss",
-        "best_val_loss": best_val_loss,
-        "test_metrics": test_metrics,
-        "decision_rule": "softmax_argmax",
-        "history_path": str(HISTORY_PATH),
+        "train_examples": len(train), "val_examples": len(val), "test_examples": len(test),
+        "class_counts_train": train_counts, "class_counts_val": val_counts,
+        "loss": "weighted CrossEntropyLoss", "best_val_loss": best_val_loss,
+        "test_metrics": test_metrics, "decision_rule": "softmax_argmax",
+        "feature_scaler_fit": "train_only", "e_means_fit": "train_only",
+        "history_path": str(history_path), "test_evaluation_enabled": bool(include_test_eval),
     }
-    save_classifier(MODEL_DIR / "best.pt", model, feature_mean, feature_std, metadata)
-    METRICS_PATH.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+    save_classifier(model_dir / "best.pt", model, feature_mean, feature_std, centroids, metadata)
+    (model_dir / "metrics.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
     try:
         import matplotlib.pyplot as plt
         figure, axes = plt.subplots(1, 2, figsize=(13, 4))
-        axes[0].plot(history_frame["epoch"], history_frame["train_loss"], label="train")
-        axes[0].plot(history_frame["epoch"], history_frame["val_loss"], label="val")
+        axes[0].plot(history["epoch"], history["train_loss"], label="train")
+        axes[0].plot(history["epoch"], history["val_loss"], label="validation")
         axes[0].set_title("Loss per epoch")
         axes[0].set_xlabel("epoch")
         axes[0].legend()
-        axes[1].plot(history_frame["epoch"], history_frame["train_f1_macro"], label="train")
-        axes[1].plot(history_frame["epoch"], history_frame["val_f1_macro"], label="val")
+        axes[1].plot(history["epoch"], history["train_f1_macro"], label="train")
+        axes[1].plot(history["epoch"], history["val_f1_macro"], label="validation")
         axes[1].set_title("Macro F1 per epoch")
         axes[1].set_xlabel("epoch")
         axes[1].legend()
         figure.tight_layout()
-        figure.savefig(PLOT_PATH, dpi=140)
+        figure.savefig(plot_path, dpi=140)
         plt.close(figure)
     except Exception as error:
-        print(f"Peringatan: plot CNN gagal dibuat: {error}")
+        print(f"Peringatan: gagal membuat plot CNN: {error}")
     print(json.dumps(metadata, indent=2, ensure_ascii=False))
 
 

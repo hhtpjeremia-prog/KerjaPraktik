@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 from PIL import Image, ImageDraw
 
 CLASS_NAMES = [
@@ -14,19 +15,11 @@ CLASS_NAMES = [
     "MotorTidakStandar",
     "PantulanCahaya",
 ]
+# Status anotasi sementara saja; bukan kelas model dan tidak boleh diekspor sebagai label.
 PENDING_CLASS_NAME = "BelumDitentukan"
-TRAINING_CLASS_NAMES = [
-    "Mobil",
-    "Motor",
-    "PantulanCahaya",
-]
-TRAINING_CLASS_BY_ANNOTATION_CLASS = {
-    "MobilStandar": "Mobil",
-    "MobilTidakStandar": "Mobil",
-    "MotorStandar": "Motor",
-    "MotorTidakStandar": "Motor",
-    "PantulanCahaya": "PantulanCahaya",
-}
+# Model vocabulary is exactly the reviewed annotation vocabulary. Reviewer workflow
+# status is metadata and must never become a model class.
+TRAINING_CLASS_NAMES = CLASS_NAMES.copy()
 SPLIT_NAME_BY_CAMERA = {
     "bogor-kab-bappenda1": "train",
     "bogor-kab-bappenda2": "test",
@@ -38,14 +31,18 @@ MAX_CROP_SIDE = 640
 MOBIL_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Mobil")]
 MOTOR_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Motor")]
 COUNT_CONTRACT = {
-    "jumlah_bbox_mobil_tidak_standar": ["MobilTidakStandar"],
-    "jumlah_bbox_motor_tidak_standar": ["MotorTidakStandar"],
+    "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis": ["MobilTidakStandar"],
+    "jumlah_kendaraan_motor_tidak_standar_melintasi_garis": ["MotorTidakStandar"],
 }
 BOX_COUNT_CONTRACT = {
-    "jumlah_bbox_mobil": ["Mobil"],
-    "jumlah_bbox_motor": ["Motor"],
+    "jumlah_bbox_mobil_standar": ["MobilStandar"],
+    "jumlah_bbox_mobil_tidak_standar": ["MobilTidakStandar"],
+    "jumlah_bbox_motor_standar": ["MotorStandar"],
+    "jumlah_bbox_motor_tidak_standar": ["MotorTidakStandar"],
+    "jumlah_bbox_pantulan_cahaya": ["PantulanCahaya"],
 }
-# NB05 melaporkan bbox deteksi per tipe kendaraan; kondisi lampu baru tersedia setelah CNN di NB06.
+# BOX_COUNT_CONTRACT is box-level; COUNT_CONTRACT above is track-crossing-level.
+# Reflection remains a trained class but is excluded from both vehicle count contracts.
 FRAGMENT_MAX_GAP_FRAMES = 50
 FRAGMENT_MIN_IOU = 0.50
 FRAGMENT_DISTANCE_RATIO = 0.35
@@ -159,8 +156,45 @@ def build_roi_crop(
 
 
 def training_class_name(annotation_class_name: str) -> str | None:
-    """Petakan anotasi reviewed ke target detector, termasuk kelas PantulanCahaya."""
-    return TRAINING_CLASS_BY_ANNOTATION_CLASS.get(annotation_class_name)
+    """Return a known five-class label unchanged; reject unknown and pending labels."""
+    return annotation_class_name if annotation_class_name in TRAINING_CLASS_NAMES else None
+
+
+def resolve_project_root(start_path: str | Path) -> Path:
+    """Find the repository root by stable marker files, independent of its folder name."""
+    start = Path(start_path).resolve()
+    candidates = (start, *start.parents)
+    for candidate in candidates:
+        if (candidate / "pipeline_common.py").is_file() and (candidate / "requirements.txt").is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"Root proyek tidak ditemukan dari {start}; perlu pipeline_common.py dan requirements.txt."
+    )
+
+
+def difference_hash(gray_image, hash_image_size: tuple[int, int] = (9, 8)) -> int:
+    """Compute the shared dHash value from a grayscale image array."""
+    image = Image.fromarray(np.asarray(gray_image, dtype=np.uint8)).convert("L")
+    resized = np.asarray(image.resize(hash_image_size, Image.Resampling.LANCZOS), dtype=np.int16)
+    differences = resized[:, 1:] >= resized[:, :-1]
+    return sum(1 << index for index, bit in enumerate(differences.reshape(-1)) if bit)
+
+
+def near_duplicate_flags(
+    frame_hashes: list[int], *, window_frames: int = 1, distance_threshold: int = 4, missing_hash: int = -1
+) -> list[bool]:
+    """Mark hashes near a prior hash in the same video, using one shared Hamming rule."""
+    flags = []
+    for index, current_hash in enumerate(frame_hashes):
+        is_duplicate = False
+        if current_hash != missing_hash:
+            start = max(0, index - window_frames)
+            is_duplicate = any(
+                previous != missing_hash and (int(current_hash) ^ int(previous)).bit_count() <= distance_threshold
+                for previous in frame_hashes[start:index]
+            )
+        flags.append(is_duplicate)
+    return flags
 
 
 def class_family(class_name: str) -> str:
@@ -194,6 +228,38 @@ def box_center_distance(box_a: list[float], box_b: list[float]) -> float:
 
 def box_diagonal(box: list[float]) -> float:
     return math.dist((box[0], box[1]), (box[2], box[3]))
+
+
+def detect_center_line_crossing(
+    observations: list[dict],
+    *,
+    line_y: float,
+    line_x1: float,
+    line_x2: float,
+    hysteresis: float,
+    min_hits: int,
+) -> dict | None:
+    """Return the first stable bbox-center crossing of a horizontal count segment."""
+    if len(observations) < min_hits:
+        return None
+    stable_side = None
+    for row in sorted(observations, key=lambda item: int(item["frame_index"])):
+        center_y = (float(row["frame_y1"]) + float(row["frame_y2"])) / 2.0
+        center_x = (float(row["frame_x1"]) + float(row["frame_x2"])) / 2.0
+        delta = center_y - line_y
+        side = -1 if delta < -hysteresis else 1 if delta > hysteresis else 0
+        if side == 0:
+            continue
+        if stable_side is not None and side != stable_side:
+            if not line_x1 <= center_x <= line_x2:
+                stable_side = side
+                continue
+            return {
+                "row": row,
+                "crossing_direction": "down" if stable_side < side else "up",
+            }
+        stable_side = side
+    return None
 
 
 def stitch_track_fragments(

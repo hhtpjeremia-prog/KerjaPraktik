@@ -63,11 +63,10 @@ import torch
 from PIL import Image, ImageDraw
 from IPython.display import Markdown, display
 
-from pipeline_common import build_roi_crop, SPLIT_NAME_BY_CAMERA
+from pipeline_common import build_roi_crop, near_duplicate_flags, SPLIT_NAME_BY_CAMERA
 
-RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
-    raise RuntimeError("Set RISET_PROJECT_ROOT ke root proyek atau jalankan notebook dari root proyek.")
+from pipeline_common import resolve_project_root
+RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT_ROOT = RISET_ROOT / "output"
 SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"
 DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
@@ -144,24 +143,6 @@ def frame_order_key(frame_path_text: str) -> int:
     return int(Path(frame_path_text).stem.split("_")[1])
 
 
-def hamming_distance(first_hash: int, second_hash: int) -> int:
-    return bin(first_hash ^ second_hash).count("1")
-
-
-def compute_duplicate_flags(frame_hashes: list[int], window_frames: int, distance_threshold: int) -> list[bool]:
-    duplicate_flags = []
-    for frame_index, current_hash in enumerate(frame_hashes):
-        is_duplicate = False
-        for previous_hash in frame_hashes[max(0, frame_index - window_frames) : frame_index]:
-            if previous_hash == HASH_PLACEHOLDER:
-                continue
-            if hamming_distance(previous_hash, current_hash) <= distance_threshold:
-                is_duplicate = True
-                break
-        duplicate_flags.append(is_duplicate)
-    return duplicate_flags
-
-
 def build_frame_records(frames_manifest: list[dict], dedup_manifest: list[dict], roi_config: dict) -> list[dict]:
     hash_by_frame_path = {row["frame_path"]: int(row["frame_hash"]) for row in dedup_manifest}
     video_groups: dict[str, list[dict]] = {}
@@ -180,10 +161,11 @@ def build_frame_records(frames_manifest: list[dict], dedup_manifest: list[dict],
     frame_records: list[dict] = []
     for video_path_text, video_rows in video_groups.items():
         video_rows.sort(key=lambda video_row: frame_order_key(video_row["frame_path"]))
-        duplicate_flags = compute_duplicate_flags(
+        duplicate_flags = near_duplicate_flags(
             [hash_by_frame_path.get(video_row["frame_path"], HASH_PLACEHOLDER) for video_row in video_rows],
-            DUPLICATE_WINDOW_FRAMES,
-            DUPLICATE_HASH_DISTANCE,
+            window_frames=DUPLICATE_WINDOW_FRAMES,
+            distance_threshold=DUPLICATE_HASH_DISTANCE,
+            missing_hash=HASH_PLACEHOLDER,
         )
         for video_row, is_duplicate in zip(video_rows, duplicate_flags):
             video_row["is_duplicate"] = is_duplicate

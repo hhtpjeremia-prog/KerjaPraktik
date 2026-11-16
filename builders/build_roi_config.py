@@ -195,6 +195,8 @@ def pick_polygon_for_camera(
     disable_default_keymap(figure)
     redraw()
     plt.show(block=True)
+    if not accepted:
+        return False, None
     polygon = [[int(round(point[0])), int(round(point[1]))] for point in points]
     if len(polygon) < MINIMUM_POLYGON_POINTS:
         return False, None
@@ -226,7 +228,7 @@ def main() -> None:
             print(f"{camera_id}: dilewati — ROI lama dipertahankan")
             continue
         roi_config[camera_id] = {**existing_entry, "polygon": polygon}
-        status = "disimpan" if accepted else "disimpan dari jendela yang ditutup"
+        status = "disimpan"
         print(f"{camera_id}: polygon {len(polygon)} verteks {status}")
     save_roi_config(ROI_CONFIG_PATH, roi_config)
     print(f"ROI config: {ROI_CONFIG_PATH}")

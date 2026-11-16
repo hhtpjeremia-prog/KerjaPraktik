@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import json
 
 import numpy as np
 import torch
@@ -10,20 +12,29 @@ from PIL import Image
 from torch import nn
 from torchvision import models, transforms
 
-ATTRIBUTE_NAMES = ("standar", "tidak_standar", "pantulan_cahaya")
-ATTRIBUTE_BY_ANNOTATION_CLASS = {
-    "MobilStandar": 0,
-    "MobilTidakStandar": 1,
-    "MotorStandar": 0,
-    "MotorTidakStandar": 1,
-    "PantulanCahaya": 2,
-}
+ATTRIBUTE_NAMES = (
+    "MobilStandar",
+    "MobilTidakStandar",
+    "MotorStandar",
+    "MotorTidakStandar",
+    "PantulanCahaya",
+)
+ATTRIBUTE_BY_ANNOTATION_CLASS = {name: index for index, name in enumerate(ATTRIBUTE_NAMES)}
 VEHICLE_TYPE_BY_ANNOTATION_CLASS = {
     **{name: "mobil" for name in ATTRIBUTE_BY_ANNOTATION_CLASS if name.startswith("Mobil")},
     **{name: "motor" for name in ATTRIBUTE_BY_ANNOTATION_CLASS if name.startswith("Motor")},
 }
 FEATURE_VERSION = "pixel-hsv-v1"
 FEATURE_SIZE = 35
+MASK_FEATURE_VERSION = "sam2-masked-hsv-shape-v1"
+MASK_FEATURE_SIZE = 42
+MODEL_NUMERIC_FEATURE_SIZE = FEATURE_SIZE + MASK_FEATURE_SIZE
+EMEANS_CLUSTER_COUNT = 8
+EMEANS_EPOCHS = 5
+EMEANS_SEED = 20261116
+BRIGHT_VALUE_THRESHOLD = 240
+COLORED_SATURATION_MIN = 80
+COLORED_VALUE_MIN = 80
 
 
 def attributes_for_label(class_name: str) -> int:
@@ -51,20 +62,18 @@ def _hsv_from_rgb(rgb: np.ndarray) -> np.ndarray:
     return np.stack((hue, saturation, maximum), axis=2)
 
 
-def extract_pixel_features(image_path: Path | Image.Image, box_xyxy: list[float]) -> np.ndarray:
-    image = np.asarray(image_path.convert("RGB") if isinstance(image_path, Image.Image) else Image.open(image_path).convert("RGB"))
-    height, width = image.shape[:2]
-    x1, y1, x2, y2 = box_xyxy
-    x1 = max(0, min(width - 1, int(round(x1))))
-    y1 = max(0, min(height - 1, int(round(y1))))
-    x2 = max(x1 + 1, min(width, int(round(x2))))
-    y2 = max(y1 + 1, min(height, int(round(y2))))
-    crop = image[y1:y2, x1:x2]
-    hsv = _hsv_from_rgb(crop)
+def _pixel_features_from_rgb_pixels(rgb_pixels: np.ndarray) -> np.ndarray:
+    if rgb_pixels.size == 0:
+        raise ValueError("fitur pixel membutuhkan setidaknya satu pixel RGB")
+    rgb_image = np.asarray(rgb_pixels, dtype=np.uint8).reshape(-1, 1, 3)
+    hsv = _hsv_from_rgb(rgb_image)
     value = hsv[..., 2]
     saturation = hsv[..., 1]
-    bright = (value >= 240 / 255).astype(np.float32)
-    colored = ((saturation >= 80 / 255) & (value >= 80 / 255)).astype(np.float32)
+    bright = (value >= BRIGHT_VALUE_THRESHOLD / 255).astype(np.float32)
+    colored = (
+        (saturation >= COLORED_SATURATION_MIN / 255)
+        & (value >= COLORED_VALUE_MIN / 255)
+    ).astype(np.float32)
     hue = hsv[..., 0][colored.astype(bool)]
     hue_counts, _ = np.histogram(hue, bins=16, range=(0, 1))
     hue_histogram = hue_counts / max(len(hue), 1)
@@ -80,25 +89,123 @@ def extract_pixel_features(image_path: Path | Image.Image, box_xyxy: list[float]
     return features
 
 
-class AttributeFusionCNN(nn.Module):
-    """ResNet18 image encoder fused with engineered HSV/color statistics."""
+def _load_rgb(image_path: Path | Image.Image | np.ndarray) -> np.ndarray:
+    if isinstance(image_path, np.ndarray):
+        image = image_path
+        if image.ndim != 3 or image.shape[2] != 3:
+            raise ValueError(f"citra RGB harus berukuran HxWx3; didapat {image.shape}")
+        return image.astype(np.uint8, copy=False)
+    if isinstance(image_path, Image.Image):
+        return np.asarray(image_path.convert("RGB"))
+    with Image.open(image_path) as source:
+        return np.asarray(source.convert("RGB"))
 
-    def __init__(self, pretrained: bool = False, feature_size: int = FEATURE_SIZE) -> None:
+
+def _clipped_box(box_xyxy: list[float], width: int, height: int) -> tuple[int, int, int, int]:
+    x1, y1, x2, y2 = box_xyxy
+    x1 = max(0, min(width - 1, int(round(x1))))
+    y1 = max(0, min(height - 1, int(round(y1))))
+    x2 = max(x1 + 1, min(width, int(round(x2))))
+    y2 = max(y1 + 1, min(height, int(round(y2))))
+    return x1, y1, x2, y2
+
+
+def extract_pixel_features(image_path: Path | Image.Image | np.ndarray, box_xyxy: list[float]) -> np.ndarray:
+    image = _load_rgb(image_path)
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = _clipped_box(box_xyxy, width, height)
+    return _pixel_features_from_rgb_pixels(image[y1:y2, x1:x2].reshape(-1, 3))
+
+
+def mask_cache_key(frame_stem: str, box_xyxy: list[float]) -> str:
+    """Stable identity shared by NB02e training masks and the CNN dataset loader."""
+    canonical = json.dumps(
+        [str(frame_stem), [round(float(value), 2) for value in box_xyxy]],
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    return f"{frame_stem}__{digest}"
+
+
+def extract_mask_aware_features(
+    image_path: Path | Image.Image | np.ndarray,
+    box_xyxy: list[float],
+    mask_source: Path | np.ndarray,
+) -> np.ndarray:
+    """Combine bbox photometry, SAM2-foreground photometry, and mask shape."""
+    image = _load_rgb(image_path)
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = _clipped_box(box_xyxy, width, height)
+    crop = image[y1:y2, x1:x2]
+    if isinstance(mask_source, np.ndarray):
+        full_mask = np.asarray(mask_source)
+    else:
+        with Image.open(mask_source) as mask_image:
+            full_mask = np.asarray(mask_image.convert("L"))
+    if full_mask.shape != (height, width):
+        raise ValueError(
+            f"ukuran mask SAM2 {full_mask.shape} tidak sama dengan citra {(height, width)}"
+        )
+    crop_mask = full_mask[y1:y2, x1:x2] > 0
+    valid_mask = bool(crop_mask.any())
+    foreground_pixels = crop[crop_mask] if valid_mask else crop.reshape(-1, 3)
+    masked_photometry = _pixel_features_from_rgb_pixels(foreground_pixels)
+
+    shape_features = np.zeros(7, dtype=np.float32)
+    shape_features[0] = float(crop_mask.mean())
+    shape_features[6] = float(valid_mask)
+    if valid_mask:
+        ys, xs = np.nonzero(crop_mask)
+        crop_height, crop_width = crop_mask.shape
+        min_x, max_x = int(xs.min()), int(xs.max())
+        min_y, max_y = int(ys.min()), int(ys.max())
+        shape_width = max_x - min_x + 1
+        shape_height = max_y - min_y + 1
+        shape_features[1] = shape_width / max(crop_width, 1)
+        shape_features[2] = shape_height / max(crop_height, 1)
+        shape_features[3] = float(xs.mean() / max(crop_width - 1, 1))
+        shape_features[4] = float(ys.mean() / max(crop_height - 1, 1))
+        shape_features[5] = float(crop_mask.sum() / max(shape_width * shape_height, 1))
+    bbox_photometry = extract_pixel_features(image, [x1, y1, x2, y2])
+    features = np.concatenate([bbox_photometry, masked_photometry, shape_features]).astype(np.float32)
+    if len(features) != MODEL_NUMERIC_FEATURE_SIZE:
+        raise AssertionError(
+            f"feature mask-aware berubah: {len(features)} != {MODEL_NUMERIC_FEATURE_SIZE}"
+        )
+    return features
+
+
+class AttributeFusionCNN(nn.Module):
+    """ResNet18 fused with mask-aware numeric features and e-means cluster encoding."""
+
+    def __init__(
+        self,
+        pretrained: bool = False,
+        feature_size: int = MODEL_NUMERIC_FEATURE_SIZE,
+        cluster_count: int = EMEANS_CLUSTER_COUNT,
+    ) -> None:
         super().__init__()
         weights = models.ResNet18_Weights.DEFAULT if pretrained else None
         self.backbone = models.resnet18(weights=weights)
         image_size = self.backbone.fc.in_features
         self.backbone.fc = nn.Identity()
+        self.feature_size = int(feature_size)
+        self.cluster_count = int(cluster_count)
         self.head = nn.Sequential(
             nn.Dropout(0.25),
-            nn.Linear(image_size + feature_size, 128),
+            nn.Linear(image_size + self.feature_size + self.cluster_count, 128),
             nn.ReLU(inplace=True),
             nn.Dropout(0.20),
             nn.Linear(128, len(ATTRIBUTE_NAMES)),
         )
 
-    def forward(self, images: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
-        return self.head(torch.cat((self.backbone(images), features), dim=1))
+    def forward(
+        self,
+        images: torch.Tensor,
+        features: torch.Tensor,
+        cluster_features: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.head(torch.cat((self.backbone(images), features, cluster_features), dim=1))
 
 
 class ResizeLongestSideAndPad:
@@ -143,24 +250,46 @@ def extract_image_crop(image_path: Path | Image.Image, box_xyxy: list[float]) ->
     return image.crop((x1, y1, x2, y2))
 
 
-def save_classifier(path: Path, model: nn.Module, mean: np.ndarray, std: np.ndarray, metadata: dict) -> None:
+def save_classifier(
+    path: Path,
+    model: nn.Module,
+    mean: np.ndarray,
+    std: np.ndarray,
+    cluster_centroids: np.ndarray,
+    metadata: dict,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "mean": mean, "std": std, "metadata": metadata}, path)
+    torch.save({
+        "state_dict": model.state_dict(), "mean": mean, "std": std,
+        "cluster_centroids": cluster_centroids, "metadata": metadata,
+    }, path)
 
 
-def load_classifier(path: Path, device: str = "cpu") -> tuple[AttributeFusionCNN, np.ndarray, np.ndarray, dict]:
+def load_classifier(
+    path: Path, device: str = "cpu"
+) -> tuple[AttributeFusionCNN, np.ndarray, np.ndarray, np.ndarray, dict]:
     payload = torch.load(path, map_location=device, weights_only=False)
     metadata = payload["metadata"]
     model_type = metadata.get("model_type", "mlp")
-    if model_type != "resnet18_hsv_fusion":
+    if model_type != "resnet18_sam2_emeans_fusion_5class":
         raise ValueError(
             f"Checkpoint classifier tidak kompatibel: model_type={model_type!r}; "
-            "latih ulang dengan `python builders/train_attribute_classifier.py`."
+            "latih ulang NB04b dengan fitur mask SAM2 + e-means lima kelas."
         )
-    model = AttributeFusionCNN(pretrained=False)
+    model = AttributeFusionCNN(
+        pretrained=False,
+        feature_size=int(metadata["numeric_feature_size"]),
+        cluster_count=int(metadata["e_means"]["n_clusters"]),
+    )
     model.load_state_dict(payload["state_dict"])
     model.to(device).eval()
-    return model, np.asarray(payload["mean"], dtype=np.float32), np.asarray(payload["std"], dtype=np.float32), metadata
+    return (
+        model,
+        np.asarray(payload["mean"], dtype=np.float32),
+        np.asarray(payload["std"], dtype=np.float32),
+        np.asarray(payload["cluster_centroids"], dtype=np.float32),
+        metadata,
+    )
 
 
 def decode_attributes(logits: np.ndarray, thresholds: dict[str, float] | None = None) -> dict[str, bool]:

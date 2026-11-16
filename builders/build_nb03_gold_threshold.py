@@ -66,11 +66,11 @@ import numpy as np
 import pandas as pd
 from IPython.display import Markdown, display
 
+from attribute_classifier import BRIGHT_VALUE_THRESHOLD, COLORED_SATURATION_MIN, COLORED_VALUE_MIN
 from pipeline_common import CLASS_NAMES, PENDING_CLASS_NAME, TRAINING_CLASS_NAMES, training_class_name
 
-RISET_ROOT = Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())).resolve()
-if RISET_ROOT.name not in {"Riset-HampirMatang", "NewStyle"}:
-    raise RuntimeError("Set RISET_PROJECT_ROOT ke root proyek atau jalankan notebook dari root proyek.")
+from pipeline_common import resolve_project_root
+RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
 OUTPUT_ROOT = RISET_ROOT / "output"
 SMOKE_MODE = os.environ.get("PIPELINE_SMOKE", "0") == "1"
 DATA_ROOT = OUTPUT_ROOT / "smoke" if SMOKE_MODE else OUTPUT_ROOT
@@ -90,9 +90,6 @@ NB03_ROOT.mkdir(parents=True, exist_ok=True)
 SPLIT_ORDER = ["train", "val", "test"]
 EXCLUDED_SPLITS = ["test"]
 
-BRIGHT_VALUE_THRESHOLD = 240
-COLORED_SATURATION_MIN = 80
-COLORED_VALUE_MIN = 80
 HUE_BUCKET_SIZE = 10
 MIN_BOX_SIDE_PIXELS = 4
 MIN_BOXES_PER_CLASS_WARNING = 15

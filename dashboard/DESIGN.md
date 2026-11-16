@@ -39,8 +39,9 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
 4. **Tanpa warna dekoratif hardcoded di `app.py`.** Warna event semantik boleh dipetakan eksplisit di
    legend karena harus identik dengan warna bbox NB06; warna dekoratif UI tetap berasal dari
    `.streamlit/config.toml`.
-5. **Satuan harus eksplisit.** Label hitung resmi adalah "bbox TidakStandar per frame"; jangan
-   menyebutnya jumlah kendaraan unik. Hitungan kelas pada timeline mengikuti bbox di frame terpilih.
+5. **Satuan harus eksplisit.** Angka utama adalah satu kendaraan tidak standar per track saat
+   center bbox melintasi counting line; satu track dihitung maksimal sekali per video. Hitungan
+   bbox per frame adalah metrik pendamping dan tidak boleh disebut kendaraan unik.
 6. **Angka tidak boleh berbohong.** Nilai `"n/a"` tetap `n/a`, tidak pernah diubah menjadi `0`.
    Angka nol hanya ditampilkan bila memang nol.
 7. **Tanpa animasi dekoratif.** Tidak ada `st.spinner` untuk operasi yang sudah selesai,
@@ -49,9 +50,11 @@ ditegakkan** di Streamlit adalah lapisan disiplin, bukan lapisan platform:
 ## Siklus state wajib
 
 Playback adalah lapisan presentasi di atas artefak NB06, bukan sumber angka baru. Video dipilih
-dari `overlay_manifest.json`; counting aktif membaca `counting_timeline.csv` dan hanya menampilkan
-baris dengan `counting_frame` sama dengan frame yang sedang dipilih. Satu kendaraan boleh muncul
-berulang karena satuan utama memang bbox per frame. `track_id` tetap ditampilkan untuk audit.
+dari `overlay_manifest.json`; frame yang dipilih pada slider dicocokkan ke `counting_timeline.csv`
+untuk menampilkan kendaraan tidak standar yang melintasi garis di frame itu. Video Streamlit tidak
+memberikan callback frame untuk menyinkronkan angka otomatis selama playback. Satu vehicle track dihitung
+maksimal sekali per video; `vehicle_id`, `track_id`, timestamp, dan arah crossing tersedia untuk
+audit. Garis hitung terlihat kuning di overlay. Bbox-per-frame disimpan sebagai metrik pendamping.
 
 Playback dan counting ditampilkan side-by-side. Legend warna bbox bersifat permanen dan menjelaskan
 keluarga kendaraan (mobil/motor) serta status tidak standar. Galeri event memakai crop bbox dari
@@ -59,10 +62,9 @@ keluarga kendaraan (mobil/motor) serta status tidak standar. Galeri event memaka
 full-frame pada `event_clips/` tetap boleh disimpan sebagai konteks audit, tetapi bukan tampilan
 utama galeri untuk end user.
 
-Model YOLO/FM memiliki kelas detector `Mobil`, `Motor`, `PantulanCahaya`; CNN memiliki label
-`Standar`, `TidakStandar`, `PantulanCahaya`. Pantulan ikut dilatih dan dievaluasi, tetapi disaring
-sebelum ByteTrack serta tidak masuk overlay, galeri event, atau hitungan kendaraan. Overlay end user
-tetap hanya menggambar bbox `TidakStandar` merah.
+YOLO dan CNN memakai lima kelas yang sama. `PantulanCahaya` ikut dilatih, tetapi disaring sebelum
+ByteTrack serta tidak masuk overlay event, galeri event, atau hitungan kendaraan. Overlay end user
+menampilkan mask SAM2 dan bbox `TidakStandar` merah serta garis hitung kuning.
 
 Bagian performa model membaca sumber evaluasi secara terpisah dari hitungan NB06:
 `output/ground_truth/annotation_summary.json` untuk cakupan review GT NB02c,

@@ -77,69 +77,76 @@ def run_app() -> AppTest:
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory() as temporary_directory:
-        temporary_root = Path(temporary_directory)
+    previous_nb06_root = os.environ.get("NB06_ROOT")
+    try:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
 
-        os.environ["NB06_ROOT"] = str(temporary_root / "empty_nb06")
-        empty_test = run_app()
-        assert not empty_test.exception, [item.value for item in empty_test.exception]
-        assert any("CCTV" in item.value for item in empty_test.title), [item.value for item in empty_test.title]
-        assert len(empty_test.warning) >= 1, "state kosong tidak memunculkan peringatan"
-        assert len(empty_test.metric) == 0, len(empty_test.metric)
-        print(f"[check] empty  title={empty_test.title[0].value!r} warnings={len(empty_test.warning)}")
+            os.environ["NB06_ROOT"] = str(temporary_root / "empty_nb06")
+            empty_test = run_app()
+            assert not empty_test.exception, [item.value for item in empty_test.exception]
+            assert any("CCTV" in item.value for item in empty_test.title), [item.value for item in empty_test.title]
+            assert len(empty_test.warning) >= 1, "state kosong tidak memunculkan peringatan"
+            assert len(empty_test.metric) == 0, len(empty_test.metric)
+            print(f"[check] empty  title={empty_test.title[0].value!r} warnings={len(empty_test.warning)}")
 
-        ready_root = temporary_root / "ready_nb06"
-        write_artifacts(ready_root)
-        os.environ["NB06_ROOT"] = str(ready_root)
-        ready_test = run_app()
-        assert not ready_test.exception, [item.value for item in ready_test.exception]
-        assert len(ready_test.warning) == 0, [item.value for item in ready_test.warning]
-        metric_labels = {item.label for item in ready_test.metric}
-        expected_metrics = {
-            "Track tidak standar crossing",
-            "Mobil tidak standar crossing",
-            "Motor tidak standar crossing",
-            "Video diproses",
-        }
-        assert expected_metrics.issubset(metric_labels), metric_labels
-        metric_values = [item.value for item in ready_test.metric]
-        camera_frames = [item.value for item in ready_test.dataframe if {"Titik CCTV", "Status"}.issubset(item.value.columns)]
-        assert camera_frames, "tabel status titik CCTV tidak dirender"
-        camera_frame = camera_frames[0]
-        print(f"[check] ready  metrics={metric_values}")
-        print(f"[check] ready  cameras={camera_frame['Titik CCTV'].tolist()}")
-        print(f"[check] ready  status={camera_frame['Status'].tolist()}")
-        camera_columns = {
-            "Split", "Status", "Kendaraan crossing",
-            "Mobil tidak standar crossing", "Motor tidak standar crossing",
-        }
-        assert camera_columns.issubset(camera_frame.columns), camera_frame.columns.tolist()
-        class_columns = {"Mobil standar", "Mobil tidak standar", "Motor standar", "Motor tidak standar", "Pantulan cahaya"}
-        class_frames = [
-            item.value for item in ready_test.dataframe
-            if "Titik CCTV" in item.value.columns and class_columns.issubset(item.value.columns)
-        ]
-        assert class_frames, [item.value.columns.tolist() for item in ready_test.dataframe]
-        print(f"[check] ready  per-class={class_frames[0][sorted(class_columns)].to_dict('records')}")
+            ready_root = temporary_root / "ready_nb06"
+            write_artifacts(ready_root)
+            os.environ["NB06_ROOT"] = str(ready_root)
+            ready_test = run_app()
+            assert not ready_test.exception, [item.value for item in ready_test.exception]
+            assert len(ready_test.warning) == 0, [item.value for item in ready_test.warning]
+            metric_labels = {item.label for item in ready_test.metric}
+            expected_metrics = {
+                "Track tidak standar crossing",
+                "Mobil tidak standar crossing",
+                "Motor tidak standar crossing",
+                "Video diproses",
+            }
+            assert expected_metrics.issubset(metric_labels), metric_labels
+            metric_values = [item.value for item in ready_test.metric]
+            camera_frames = [item.value for item in ready_test.dataframe if {"Titik CCTV", "Status"}.issubset(item.value.columns)]
+            assert camera_frames, "tabel status titik CCTV tidak dirender"
+            camera_frame = camera_frames[0]
+            print(f"[check] ready  metrics={metric_values}")
+            print(f"[check] ready  cameras={camera_frame['Titik CCTV'].tolist()}")
+            print(f"[check] ready  status={camera_frame['Status'].tolist()}")
+            camera_columns = {
+                "Split", "Status", "Kendaraan crossing",
+                "Mobil tidak standar crossing", "Motor tidak standar crossing",
+            }
+            assert camera_columns.issubset(camera_frame.columns), camera_frame.columns.tolist()
+            class_columns = {"Mobil standar", "Mobil tidak standar", "Motor standar", "Motor tidak standar", "Pantulan cahaya"}
+            class_frames = [
+                item.value for item in ready_test.dataframe
+                if "Titik CCTV" in item.value.columns and class_columns.issubset(item.value.columns)
+            ]
+            assert class_frames, [item.value.columns.tolist() for item in ready_test.dataframe]
+            print(f"[check] ready  per-class={class_frames[0][sorted(class_columns)].to_dict('records')}")
 
-        partial_root = temporary_root / "partial_nb06"
-        partial_root.mkdir(parents=True, exist_ok=True)
-        (partial_root / "counting_summary.json").write_text("{}", encoding="utf-8")
-        os.environ["NB06_ROOT"] = str(partial_root)
-        partial_test = run_app()
-        assert not partial_test.exception, [item.value for item in partial_test.exception]
-        assert len(partial_test.warning) >= 1, "state parsial tidak memunculkan peringatan"
-        print(f"[check] partial warnings={len(partial_test.warning)}")
+            partial_root = temporary_root / "partial_nb06"
+            partial_root.mkdir(parents=True, exist_ok=True)
+            (partial_root / "counting_summary.json").write_text("{}", encoding="utf-8")
+            os.environ["NB06_ROOT"] = str(partial_root)
+            partial_test = run_app()
+            assert not partial_test.exception, [item.value for item in partial_test.exception]
+            assert len(partial_test.warning) >= 1, "state parsial tidak memunculkan peringatan"
+            print(f"[check] partial warnings={len(partial_test.warning)}")
 
-        broken_root = temporary_root / "broken_nb06"
-        broken_root.mkdir(parents=True, exist_ok=True)
-        (broken_root / "counting_summary.json").write_text("{bukan json", encoding="utf-8")
-        (broken_root / "counting_by_video.csv").write_text("camera_id\n", encoding="utf-8")
-        os.environ["NB06_ROOT"] = str(broken_root)
-        broken_test = run_app()
-        assert not broken_test.exception, [item.value for item in broken_test.exception]
-        assert len(broken_test.error) >= 1, "state rusak tidak memunculkan error"
-        print(f"[check] broken errors={len(broken_test.error)}")
+            broken_root = temporary_root / "broken_nb06"
+            broken_root.mkdir(parents=True, exist_ok=True)
+            (broken_root / "counting_summary.json").write_text("{bukan json", encoding="utf-8")
+            (broken_root / "counting_by_video.csv").write_text("camera_id\n", encoding="utf-8")
+            os.environ["NB06_ROOT"] = str(broken_root)
+            broken_test = run_app()
+            assert not broken_test.exception, [item.value for item in broken_test.exception]
+            assert len(broken_test.error) >= 1, "state rusak tidak memunculkan error"
+            print(f"[check] broken errors={len(broken_test.error)}")
+    finally:
+        if previous_nb06_root is None:
+            os.environ.pop("NB06_ROOT", None)
+        else:
+            os.environ["NB06_ROOT"] = previous_nb06_root
 
     print("[check] SEMUA STATE DASHBOARD OK")
 

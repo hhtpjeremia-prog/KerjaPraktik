@@ -1,0 +1,32 @@
+{
+  "smoke_mode": false,
+  "weights": "D:\\Jere\\NewStyle\\output\\nb04\\runs\\nb04_yolo11n\\weights\\best.pt",
+  "counting_split": "test",
+  "frames_counted": 162,
+  "counted_boxes": 1556,
+  "class_counts": {
+    "MobilStandar": 2,
+    "MobilTidakStandar": 533,
+    "MotorStandar": 9,
+    "MotorTidakStandar": 725,
+    "PantulanCahaya": 287
+  },
+  "box_totals": {
+    "jumlah_bbox_mobil_standar": 2,
+    "jumlah_bbox_mobil_tidak_standar": 533,
+    "jumlah_bbox_motor_standar": 9,
+    "jumlah_bbox_motor_tidak_standar": 725,
+    "jumlah_bbox_pantulan_cahaya": 287
+  },
+  "selected_thresholds": {
+    "MobilStandar": 0.05,
+    "MobilTidakStandar": 0.2,
+    "MotorStandar": 0.05,
+    "MotorTidakStandar": 0.5,
+    "PantulanCahaya": 0.4
+  },
+  "counting_unit": "box_per_frame",
+  "unit_note": "satu box per frame; kendaraan yang sama terlihat di beberapa frame dihitung beberapa kali. Angka kendaraan unik hanya terbit dari NB06.",
+  "val_metrics_path": "D:\\Jere\\NewStyle\\output\\nb04\\val_metrics.json",
+  "val_metrics_exists": true
+}

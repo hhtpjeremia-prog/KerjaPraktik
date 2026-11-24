@@ -38,6 +38,7 @@ def build_notebook() -> nbformat.NotebookNode:
             "mask secara konsisten; ColorJitter hanya diterapkan pada citra CNN. "
             "NB02e harus selesai dengan manifest `complete` sebelum notebook ini dijalankan. "
             "Jika NB02c memiliki anotasi test yang sudah direview, metrik test dihitung terpisah. "
+            "Scatter e-means ada di `output/attribute_classifier/emeans_pca_scatter.png`; PCA 2D hanya untuk inspeksi dan basisnya di-fit dari train. "
             "MSE/RMSE pada label multiclass adalah Brier score dan akar Brier score, bukan metrik bbox. "
             "Label hasil CNN menjadi kelas akhir per bbox; PantulanCahaya tetap dipelajari tetapi dikecualikan dari hitungan kendaraan dan overlay event."
         ),
@@ -58,7 +59,7 @@ def build_notebook() -> nbformat.NotebookNode:
             "history_frame = pd.read_csv(history_path)\n"
             "display(history_frame.tail())\n"
             "display(Markdown('Plot lengkap tersimpan di `output/attribute_classifier/training_curves.png`. '\n"
-            "'Kolom test hanya ada bila test memiliki ground truth. Kurva pemilihan jumlah cluster ada di `emeans_k_selection.png`.'))\n"
+            "'Kolom test hanya ada bila test memiliki ground truth. Kurva pemilihan jumlah cluster ada di `emeans_k_selection.png`; scatter PCA e-means ada di `emeans_pca_scatter.png`.'))\n"
         ),
     ], metadata={
         "kernelspec": {"name": "python3", "display_name": "Python 3"},

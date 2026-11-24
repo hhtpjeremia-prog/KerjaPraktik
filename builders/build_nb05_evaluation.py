@@ -556,7 +556,7 @@ hitung bukan estimasi arus lalu lintas dan tidak boleh diekstrapolasi ke per jam
 
 
 TEST_EVALUATION_SOURCE = '''from ultralytics import YOLO
-import yaml
+from ultralytics.utils import YAML
 
 GT_ROOT = OUTPUT_ROOT / "ground_truth" / "yolo"
 GT_IMAGES, GT_LABELS = GT_ROOT / "images", GT_ROOT / "labels"
@@ -596,8 +596,8 @@ else:
         )
     (GT_ROOT / "labels.cache").unlink(missing_ok=True)
     test_yaml = NB05_ROOT / "test_ground_truth.yaml"
-    test_yaml.write_text(yaml.safe_dump({"path": str(GT_ROOT), "train": "images", "val": "images", "test": "images",
-        "nc": len(TRAINING_CLASS_NAMES), "names": {i: n for i, n in enumerate(TRAINING_CLASS_NAMES)}}, sort_keys=False), encoding="utf-8")
+    YAML.save(test_yaml, data={"path": str(GT_ROOT), "train": "images", "val": "images", "test": "images",
+        "nc": len(TRAINING_CLASS_NAMES), "names": {i: n for i, n in enumerate(TRAINING_CLASS_NAMES)}})
     test_model = YOLO(str(WEIGHTS_PATH))
     result = test_model.val(data=str(test_yaml), split="test", imgsz=IMAGE_SIZE, batch=BATCH_SIZE, device=DEVICE, plots=True)
     metrics = {"precision": float(result.box.mp), "recall": float(result.box.mr),

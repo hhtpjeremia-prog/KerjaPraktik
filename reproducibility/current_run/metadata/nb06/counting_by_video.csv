@@ -1,0 +1,3 @@
+video_stem,camera_id,crossings_counted,bbox_per_frame_detections,MobilStandar,MobilTidakStandar,MotorStandar,MotorTidakStandar,PantulanCahaya,jumlah_kendaraan_mobil_tidak_standar_melintasi_garis,jumlah_kendaraan_motor_tidak_standar_melintasi_garis
+atcs_bogor-kab-bappenda2_20261002_190817,bogor-kab-bappenda2,493,104452,607,37714,15845,66738,11809,153,340
+atcs_bogor-kab-pdam2_20261002_192854,bogor-kab-pdam2,260,101196,2719,50777,20735,50419,30826,91,169

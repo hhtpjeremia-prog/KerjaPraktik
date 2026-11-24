@@ -32,6 +32,11 @@ from pipeline_common import (
     box_overlap_iou,
     detect_center_line_crossing,
     filter_store_frames,
+    detect_line_crossings,
+    allocate_protected_sample_quota,
+    qualify_by_class_threshold,
+    resolve_track_class,
+    summarise_units,
     stitch_track_fragments,
     training_class_name,
     validate_tracker_thresholds,
@@ -121,6 +126,74 @@ def check_overlapping_fragments_rejected() -> None:
         build_track_row(2, "MobilTidakStandar", 10, 14, SAME_PLACE_BOX, SAME_PLACE_BOX),
     ])
     assert vehicles_counted == 2, f"fragmen tumpang waktu tersambung: {vehicles_counted} kendaraan"
+
+
+def build_detection_row(frame_index: int, class_name: str, box: tuple[float, float, float, float], score: float = 0.9) -> dict:
+    return {
+        "video_stem": "video_uji",
+        "camera_id": "bogor-kab-bappenda2",
+        "track_id": 7,
+        "vehicle_id": 7,
+        "frame_index": frame_index,
+        "class_name": class_name,
+        "score": score,
+        "frame_x1": box[0], "frame_y1": box[1], "frame_x2": box[2], "frame_y2": box[3],
+    }
+
+
+def check_counting_helpers_threshold_and_track_summary() -> None:
+    detections = pd.DataFrame([
+        build_detection_row(1, "MotorTidakStandar", (20, 20, 40, 40), 0.8),
+        build_detection_row(2, "MotorTidakStandar", (20, 25, 40, 45), 0.9),
+        build_detection_row(3, "MotorStandar", (20, 30, 40, 50), 0.2),
+    ])
+    qualified = qualify_by_class_threshold(
+        detections,
+        {"MotorTidakStandar": 0.5, "MotorStandar": 0.5},
+    )
+    assert len(qualified) == 2
+    resolved_class, mean_score = resolve_track_class(qualified)
+    assert resolved_class == "MotorTidakStandar" and np.isclose(mean_score, 0.85)
+    summary = summarise_units(qualified, "track_id")
+    assert len(summary) == 1 and int(summary.iloc[0]["hits"]) == 2
+    assert summary.iloc[0]["class_name"] == "MotorTidakStandar"
+
+
+def check_counting_helper_emits_one_crossing_and_ignores_standard() -> None:
+    detections = pd.DataFrame([
+        build_detection_row(0, "MotorTidakStandar", (20, 20, 40, 40)),
+        build_detection_row(1, "MotorTidakStandar", (20, 30, 40, 50)),
+        build_detection_row(2, "MotorTidakStandar", (20, 40, 40, 60)),
+    ])
+    line_jobs = {"video_uji": {
+        "count_line_y": 40, "count_line_x1": 0, "count_line_x2": 100, "height": 100,
+    }}
+    crossings = detect_line_crossings(
+        detections, line_jobs, min_track_hits=2, hysteresis_ratio=0.02,
+    )
+    assert len(crossings) == 1
+    assert crossings.iloc[0]["crossing_direction"] == "down"
+    standard = detections.assign(class_name="MotorStandar")
+    assert detect_line_crossings(
+        standard, line_jobs, min_track_hits=2, hysteresis_ratio=0.02,
+    ).empty
+
+
+def check_protected_sampling_quota_preserves_reviewed_frames() -> None:
+    quotas = allocate_protected_sample_quota(
+        {"camera_a": 10, "camera_b": 10},
+        {"camera_a": 8, "camera_b": 0},
+        10,
+    )
+    assert sum(quotas.values()) == 10
+    assert quotas["camera_a"] >= 8
+    assert quotas["camera_b"] <= 10
+    try:
+        allocate_protected_sample_quota({"camera_a": 10}, {"camera_a": 7}, 5)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("sampling mengizinkan frame terlindungi melebihi target")
 
 
 def check_distant_fragments_rejected() -> None:
@@ -348,6 +421,9 @@ def main() -> None:
         check_box_contract_partitions_all_classes,
         check_mobil_fragment_not_stitched_to_motor,
         check_overlapping_fragments_rejected,
+        check_counting_helpers_threshold_and_track_summary,
+        check_counting_helper_emits_one_crossing_and_ignores_standard,
+        check_protected_sampling_quota_preserves_reviewed_frames,
         check_distant_fragments_rejected,
         check_gap_beyond_limit_rejected,
         check_adjacent_fragments_stitched,

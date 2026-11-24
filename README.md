@@ -1,6 +1,6 @@
 # Riset-HampirMatang
 
-> **Kontrak aktif 2026-11-17 (menggantikan kontrak lama di bawah).** Anotasi, Grounding DINO base,
+> **Kontrak aktif 2026-11-18 (menggantikan kontrak lama di bawah).** Anotasi, Grounding DINO base,
 > YOLO, dan CNN memakai lima kelas sama: `MobilStandar`, `MobilTidakStandar`, `MotorStandar`,
 > `MotorTidakStandar`, `PantulanCahaya`. `BelumDitentukan` bukan kelas model. Continued fine-tune
 > dibatalkan; notebook continued dihapus dan output/checkpoint lama hanya arsip. Pseudo-label FM
@@ -12,8 +12,11 @@
 
 Pipeline riset untuk mendeteksi kondisi lampu kendaraan, menampilkan mask SAM2, dan menghitung
 track kendaraan tidak standar saat melintasi garis virtual. Bbox-per-frame disimpan sebagai metrik
-pendamping. Notebook pipeline utama di root **dibangun** dari
-`builders/build_nb*.py`; jangan edit `.ipynb` langsung, edit builder lalu regenerasi.
+pendamping. Notebook pipeline utama yang memiliki builder Python di root **dibangun** dari
+`builders/build_nb*.py`; jangan edit `.ipynb` langsung. Setelah mengubah builder, jalankan
+`python builders/notebook_gate.py --sync-sources` untuk menyamakan source sel. Output sel kode yang
+source-nya berubah dibersihkan; output sel lain dipertahankan. `run_checks.ps1` memverifikasi
+kesesuaian notebook dan builder.
 
 ## Kontrak label dan model
 
@@ -36,6 +39,20 @@ python -m venv .venv
 dari indeks PyTorch resmi; sisa paket tetap sama.
 
 ## Urutan menjalankan
+
+### Rerun terarah setelah Audit 3 (2026-11-18)
+
+Perubahan Audit 3 menyentuh logic NB05/NB06 dan dashboard, bukan data pseudo-label, anotasi manual, Ground
+Truth, mask, atau bobot model. Jika seluruh input upstream sudah lengkap dan konsisten, jalankan:
+
+```powershell
+.\builders\run_pipeline.ps1 -StartAt NB05
+```
+
+Perintah itu menjalankan NB05 kemudian NB06. Pastikan tidak ada proses aktif yang sedang menjalankan
+NB05/NB06 dari VS Code atau runner. NB02b/NB02c/NB02d/NB02e/NB03/NB04/NB04b tidak perlu diulang untuk
+perbaikan Audit 3. Rerun penuh hanya diperlukan jika data, mask, konfigurasi, atau bobot upstream berubah.
+Detail dan batas checkpoint ada di [`builders/PIPELINE_RUNNER.md`](builders/PIPELINE_RUNNER.md).
 
 Runner menjalankan pemeriksaan logika pipeline dan dashboard terlebih dahulu melalui
 `builders/run_checks.ps1`. Jalankan pemeriksaan yang sama secara mandiri dengan
@@ -104,7 +121,9 @@ tidak sekadar menghafal kamera/frame. Jalankan setelah gold set memiliki data tr
 
 Artefak classifier ditulis ke `output/attribute_classifier/`. Metrik test classifier (precision,
 recall, F1, MSE/Brier, RMSE) hanya muncul dari frame NB02c yang sudah direview. MSE/RMSE mengukur
-error probabilitas label kondisi, bukan geometri bbox.
+error probabilitas label kondisi, bukan geometri bbox. Training menghasilkan kurva pemilihan k di
+`emeans_k_selection.png` dan scatter PCA 2D di `emeans_pca_scatter.png`; PCA hanya untuk inspeksi,
+di-fit memakai fitur train, dan tidak mengubah assignment e-means 77 dimensi.
 
 NB02e membuat cache mask SAM2 untuk box manual train/validation, GT test, serta pseudo FM train. NB06 menjalankan SAM2 per frame untuk overlay dan input classifier dengan kontrak fitur sama. Mask untuk kelas kondisi kendaraan ditampilkan (merah untuk TidakStandar, biru untuk Standar); keluaran `PantulanCahaya` menjadi background. Bbox merah dan counting line hanya untuk kelas TidakStandar. Jika label, proposal, atau model SAM2 berubah, jalankan NB02e sampai `complete`, lalu NB04b dan NB06. Source e-means resmi dipasang oleh script PowerShell ke `vendor/faiss_e_means`; package Faiss/GPU tidak diperlukan karena assignment memakai backend native PyTorch. E-means adalah fitur eksperimen tanpa jaminan kenaikan akurasi; bandingkan hasil validation pada split yang sama.
 
@@ -244,8 +263,26 @@ secara side-by-side, dengan legend permanen yang menjelaskan warna dan tipe kend
 NB06 membuat dua bentuk artefak event: video konteks di `event_clips/<kelas>/` dan crop bbox pada
 `event_crops/<kelas>/`. Galeri dashboard memakai crop bbox, bukan full-frame clip, dan menyediakan
 filter kelas/CCTV, detail event, navigasi sebelumnya/berikutnya, serta grid 8Ã—8. Video overlay yang
-tidak dapat diputar browser dapat dikonversi melalui cell terakhir NB06 ke `overlays_browser/` dengan
-codec AVC1; video sumber tidak dihapus.
+ditulis sementara oleh OpenCV dengan codec `mp4v`, lalu cell terakhir NB06 mengonversi overlay ke
+H.264 (`libx264`) melalui FFmpeg di `overlays_browser/` agar kompatibel dengan browser. Video sumber
+tetap disimpan di `overlays/`. NB06 juga menyimpan preview inferensi berupa dua frame per CCTV di
+`output/nb06/inference_preview_grid.png` dan file PNG per kamera di `output/nb06/inference_previews/`.
+Caption menunjukkan prediksi CNN dan jumlah assignment e-means per frame; rincian per track ada di
+`inference_preview_manifest.json` dan `tracking_detections.csv`.
+Pemutar video dan galeri menyediakan toggle **Mask tampil / Mask disembunyikan**. Mode tanpa mask
+tetap menampilkan bbox merah, label, dan garis hitung; kedua mode memakai hasil klasifikasi yang sama.
+Mask ditampilkan secara default. Toggle hanya memilih varian presentasi; ia tidak mengubah inferensi,
+kelas, counting, atau metrik. Pasangan video/crop dibuat setelah NB06 selesai tanpa mengulang YOLO
+atau ByteTrack. Proses pasca-NB06 memerlukan video sumber, manifest deteksi, dan model SAM2 untuk
+membuat crop galeri bermask.
+NB06 juga menyimpan checkpoint atomik per video di `output/nb06/video_checkpoints/`. Setelah
+interupsi, video yang checkpoint-nya valid akan dilewati; video yang terputus di tengah tetap diproses
+ulang dari awal karena state ByteTrack tidak disimpan per frame. Checkpoint divalidasi terhadap video,
+bobot YOLO/CNN, konfigurasi SAM2, threshold, ROI, dan konfigurasi tracker. File overlay parsial bukan
+checkpoint dan tidak dapat dipakai untuk memulihkan video yang terputus. Setelah semua video selesai,
+NB06 menyusun ulang tabel global, manifest, preview, dan varian presentasi dari checkpoint yang valid.
+Untuk melanjutkan run yang terputus, jalankan kembali NB06; jangan hapus `video_checkpoints/` yang
+valid. Jika checkpoint tidak ada atau tidak lolos validasi, video terkait akan diproses ulang.
 
 ## Catatan historis dan prosedur rerun lama
 
@@ -292,13 +329,16 @@ YOLO untuk NB05 memakai ID `0=Mobil`, `1=Motor`, `2=PantulanCahaya`; box standar
 kendaraan, sedangkan pantulan dievaluasi sebagai kelas terpisah. Script `builders/repair_ground_truth_export.py` menyelaraskan metadata dimensi GT dengan
 gambar ROI aktif, memvalidasi batas bbox, dan menyimpan ekspor lama sebagai backup.
 
-### Verifikasi yang telah dilakukan
+### Remediasi Ponytail Audit 3
 
-Pada 12 November 2026 source Python yang disentuh lolos `py_compile`, source notebook NB02, NB02b,
-NB03, NB04, NB04b, NB05, dan NB06 cocok dengan builder, dan `git diff --check` bersih. Training,
-inferensi video, smoke end-to-end, dan test suite tidak dijalankan pada sesi audit ini. Jadi hasil
-performa model setelah retraining tetap harus dievaluasi; pemeriksaan source tidak membuktikan
-akurasi model.
+Temuan dan status penanganan tiap poin dicatat di
+[`PONYTAIL_AUDIT_3_REMEDIATION.md`](PONYTAIL_AUDIT_3_REMEDIATION.md). Pemeriksaan source dan unit
+logic bukan bukti akurasi model; training atau inferensi riset tidak dijalankan sebagai bagian
+remediasi ini.
+
+Skrip diagnosis/sekali pakai yang tidak dipanggil pipeline aktif disimpan di
+[`archive/one-off-scripts/`](archive/one-off-scripts/README.md). Generator NB02c tetap berada di
+`builders/` karena menjadi sumber notebook GT.
 
 ## Artefak
 

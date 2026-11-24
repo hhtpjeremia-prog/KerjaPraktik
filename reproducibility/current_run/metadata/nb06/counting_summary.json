@@ -1,0 +1,68 @@
+{
+  "smoke_mode": false,
+  "weights": "D:\\Jere\\NewStyle\\output\\nb04\\runs\\nb04_yolo11n\\weights\\best.pt",
+  "tracker": "D:\\Jere\\NewStyle\\builders\\bytetrack_nb06.yaml",
+  "segmentation_overlay": {
+    "enabled": true,
+    "model": "facebook/sam2.1-hiera-tiny",
+    "alpha": 0.3
+  },
+  "counting_line_y_ratio_by_camera": {
+    "bogor-kab-bappenda1": 0.72,
+    "bogor-kab-bappenda2": 0.72,
+    "bogor-kab-bappenda3": 0.72,
+    "bogor-kab-pdam2": 0.72,
+    "bogor-kab-pemda2": 0.72
+  },
+  "counted_splits": [
+    "test"
+  ],
+  "unit": "vehicle line crossing (satu track dihitung satu kali per video saat melintasi garis)",
+  "frames_processed": 67789,
+  "raw_detections": 806095,
+  "untracked_detections": 424,
+  "thresholded_detections": 288189,
+  "tracks_total": 2263,
+  "vehicles_total": 2034,
+  "fragments_stitched": 229,
+  "line_crossings_counted": 753,
+  "bbox_per_frame_nonstandard_detections": 205648,
+  "unique_vehicles_audit": 1786,
+  "presentation_line_crossings": 919,
+  "videos_found": 5,
+  "videos_counted": 5,
+  "min_track_hits": 3,
+  "max_fragment_gap_frames": 50,
+  "min_fragment_iou": 0.5,
+  "duplication_factor_vs_per_frame": 161.36,
+  "class_counts": {
+    "MobilStandar": 3326,
+    "MobilTidakStandar": 88491,
+    "MotorStandar": 36580,
+    "MotorTidakStandar": 117157,
+    "PantulanCahaya": 42635
+  },
+  "event_class_counts": {
+    "MobilStandar": 0,
+    "MobilTidakStandar": 244,
+    "MotorStandar": 0,
+    "MotorTidakStandar": 509,
+    "PantulanCahaya": 0
+  },
+  "counting_totals": {
+    "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis": 244,
+    "jumlah_kendaraan_motor_tidak_standar_melintasi_garis": 509
+  },
+  "selected_thresholds": {
+    "MobilStandar": 0.05,
+    "MobilTidakStandar": 0.2,
+    "MotorStandar": 0.05,
+    "MotorTidakStandar": 0.5,
+    "PantulanCahaya": 0.4
+  },
+  "counting_timeline": "D:\\Jere\\NewStyle\\output\\nb06\\counting_timeline.csv",
+  "overlay_manifest": "D:\\Jere\\NewStyle\\output\\nb06\\overlay_manifest.json",
+  "inference_preview_grid": "D:\\Jere\\NewStyle\\output\\nb06\\inference_preview_grid.png",
+  "inference_preview_manifest": "D:\\Jere\\NewStyle\\output\\nb06\\inference_preview_manifest.json",
+  "video_checkpoint_dir": "D:\\Jere\\NewStyle\\output\\nb06\\video_checkpoints"
+}

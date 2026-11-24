@@ -1,5 +1,26 @@
 # Runner pipeline notebook
 
+## Rerun setelah Ponytail Audit 3 (2026-11-18)
+
+Audit 3 memperbaiki kode evaluasi NB05, tracking/counting dan pembuatan artefak NB06, serta caching dashboard.
+Audit tersebut tidak mengubah pseudo-label, annotation store, Ground Truth, konfigurasi/model YOLO atau CNN,
+mask SAM2, maupun fitur training. Jika semua artefak upstream itu berasal dari run yang sama dan lengkap,
+rerun terarah cukup:
+
+```powershell
+.\builders\run_pipeline.ps1 -StartAt NB05
+```
+
+Runner menjalankan NB05 lalu NB06 secara berurutan. NB05 memperbarui evaluasi/threshold dan artefak evaluasi;
+NB06 memakai hasil tersebut untuk memperbarui tracking, overlay, checkpoint/rekap, galeri, dan dashboard.
+Jangan jalankan NB05 atau NB06 bersamaan dari VS Code dan runner. Sebelum memulai, pastikan tidak ada proses
+pipeline atau kernel yang sedang mengeksekusi salah satu notebook tersebut.
+
+NB02b/NB02c/NB02d/NB02e/NB03/NB04/NB04b tidak perlu diulang untuk perubahan Audit 3 ini. Sampling NB02b
+yang kini dapat dikonfigurasi hanya berlaku jika memang ingin membuat ulang sampling/anotasi; perubahan itu
+tidak mengharuskan regenerasi anotasi yang sudah ada. Jika prasyarat atau input model ternyata berubah, ikuti
+dependensi pada bagian pipeline penuh di bawah, bukan rerun terarah ini.
+
 `run_pipeline.ps1` menjalankan notebook komputasi secara berurutan dan menyimpan log setiap tahap di
 `output/pipeline_runs/<timestamp>/`. Runner menjalankan notebook lewat kernel `.venv` dan menulis output
 kembali ke notebook (`nbconvert --inplace`).
@@ -9,10 +30,17 @@ menangkap stdout/stderr nbconvert. PowerShell dapat mengubah pesan status biasa 
 `NativeCommandError` ketika preference bernilai `Stop`; keberhasilan notebook ditentukan dari exit code
 proses Python.
 
+Sebelum commit atau menjalankan pipeline panjang, jalankan `builders/run_checks.ps1`. Ini menjalankan
+logic checks, dashboard state checks, dan membandingkan source semua 11 notebook builder dengan file
+`.ipynb` di root. Jika source notebook tertinggal, sinkronkan dengan
+`python builders/notebook_gate.py --sync-sources`, lalu jalankan kembali `run_checks.ps1`. Sel kode
+yang berubah dibersihkan output-nya agar hasil lama tidak terlihat seolah berasal dari source baru.
+NB01b dan NB01c tidak memiliki builder Python dan tidak termasuk pasangan gate.
+
 NB04 memerlukan export YOLO NB02b dengan vocabulary lima kelas yang sama persis dengan `pipeline_common.py`.
-Jika manifest export lama tidak mencatat vocabulary tersebut, refresh artifact dari store anotasi yang
-sedang aktif menggunakan `python builders/refresh_nb02b_exports.py`, lalu jalankan ulang dari NB04.
-Script menyimpan export YOLO lama dan COCO lama di folder backup bertimestamp.
+Jika export perlu diperbarui, jalankan ulang sel export pada NB02b dari store anotasi aktif; sel itu
+adalah satu-satunya writer resmi COCO dan YOLO. Export lama dipindahkan ke backup bertimestamp sebelum
+data baru dipasang.
 
 ## Tahap dan pilihan mulai
 
@@ -35,6 +63,25 @@ proses training kedua. Setelah proses itu selesai, mulai dari tahap berikutnya.
 NB02e memerlukan proposal NB02d berstatus `complete` dan GT NB02c. NB04b memerlukan mask manifest
 NB02e berstatus `complete`. Jika source e-means belum ada, runner menjalankan installer resmi satu kali
 sebelum NB04b; instalasi ini perlu akses internet.
+
+Jalankan satu tahap notebook pada satu waktu. Jangan membuka eksekusi notebook yang sama lewat VS Code
+dan runner secara bersamaan; dua kernel akan bersaing memakai memori/GPU dan dapat membuat output
+parsial atau menghentikan kernel.
+
+## Pemulihan NB06
+
+NB06 menyimpan satu checkpoint atomik per video di `output/nb06/video_checkpoints/` setelah video
+selesai diproses. Jika eksekusi terhenti, mulai lagi dari NB06: checkpoint yang cocok dengan input,
+bobot, threshold, ROI, konfigurasi SAM2, dan tracker akan dipakai untuk menyusun ulang artefak global.
+Video tanpa checkpoint valid, termasuk video yang berhenti di tengah, diproses ulang dari awal karena
+state internal ByteTrack tidak disimpan per frame. Jangan menghapus checkpoint valid saat melanjutkan.
+Overlay parsial yang belum punya checkpoint tidak menandakan video sudah selesai.
+
+Pasangan overlay dengan/tanpa mask dan crop galeri bermask dibentuk pada tahap pasca-NB06. Toggle di
+dashboard hanya mengubah tampilan; ia tidak memicu inferensi atau mengubah counting. Jika hanya
+pasangan presentasi yang perlu dibangun ulang, gunakan builder `builders/build_nb06_display_variants.py`
+setelah memastikan manifest deteksi, video sumber, dan bobot SAM2 tersedia.
+Dalam mode smoke, builder tersebut menulis ke `output/smoke/nb06`, bukan artefak dashboard riset.
 
 ## Jika notebook gagal
 

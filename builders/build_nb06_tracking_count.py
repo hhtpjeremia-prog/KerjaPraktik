@@ -148,7 +148,13 @@ from pipeline_common import (
     stitch_track_fragments,
     validate_tracker_thresholds,
 )
-from attribute_classifier import IMAGE_TRANSFORM, decode_attributes, extract_mask_aware_features, load_classifier
+from attribute_classifier import (
+    IMAGE_TRANSFORM,
+    decode_attributes,
+    extract_image_crop,
+    extract_mask_aware_features,
+    load_classifier,
+)
 from feature_clustering import assign_e_means_clusters, cluster_one_hot
 
 from pipeline_common import resolve_project_root
@@ -180,8 +186,14 @@ MAPPING_AUDIT_PATH = NB06_ROOT / "roi_mapping_audit.csv"
 FRAGMENT_MERGES_PATH = NB06_ROOT / "fragment_merges.csv"
 FIGURE_PATH = NB06_ROOT / "counting_bar.png"
 OVERLAY_DIR = NB06_ROOT / "overlays"
+VIDEO_CHECKPOINT_DIR = NB06_ROOT / "video_checkpoints"
+INFERENCE_PREVIEW_DIR = NB06_ROOT / "inference_previews"
+INFERENCE_PREVIEW_GRID_PATH = NB06_ROOT / "inference_preview_grid.png"
+INFERENCE_PREVIEW_MANIFEST_PATH = NB06_ROOT / "inference_preview_manifest.json"
 EVENT_CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 EVENT_CROPS_DIR.mkdir(parents=True, exist_ok=True)
+INFERENCE_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+VIDEO_CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 OVERLAY_LABELS = os.environ.get("NB06_OVERLAY_LABELS", "1") == "1"
 SAM2_MODEL_ID = os.environ.get("NB06_SAM2_MODEL", "facebook/sam2.1-hiera-tiny")
 
@@ -258,18 +270,13 @@ if not TRACKER_CONFIG_PATH.exists():
     raise FileNotFoundError(f"konfigurasi tracker tidak ada: {TRACKER_CONFIG_PATH}")
 thresholds_payload = load_json_document(THRESHOLDS_PATH)
 selected_thresholds = thresholds_payload["selected_thresholds"]
-effective_thresholds = {
-    class_name: float(
-        selected_thresholds.get(
-            class_name,
-            selected_thresholds.get(class_name, 0.25),
-        )
-    )
-    for class_name in CLASS_NAMES
-}
 missing_thresholds = [class_name for class_name in TRAINING_CLASS_NAMES if class_name not in selected_thresholds]
 if missing_thresholds:
     raise ValueError(f"ambang confidence belum ada untuk kelas: {missing_thresholds}")
+effective_thresholds = {
+    class_name: float(selected_thresholds[class_name])
+    for class_name in CLASS_NAMES
+}
 
 from ultralytics.utils import YAML
 
@@ -374,9 +381,11 @@ display(Markdown(
     f"estimasi durasi: **{scan_frame['frame_limit'].sum() / scan_frame['fps'].mean() / 60:.1f} menit** video"
 ))'''
 
-TRACK_SOURCE = '''from PIL import Image
+TRACK_SOURCE = '''import hashlib
+import json
+from PIL import Image
 from ultralytics import YOLO
-from attribute_classifier import decode_attributes, extract_mask_aware_features, load_classifier
+from attribute_classifier import decode_attributes, extract_image_crop, extract_mask_aware_features, load_classifier
 from feature_clustering import assign_e_means_clusters, cluster_one_hot
 
 from transformers import Sam2Model, Sam2Processor
@@ -471,8 +480,95 @@ if attribute_metadata.get("model_type") != "resnet18_sam2_emeans_fusion_5class":
 if tuple(attribute_metadata.get("attribute_names", ())) != tuple(TRAINING_CLASS_NAMES):
     raise RuntimeError("Checkpoint CNN belum memakai urutan lima kelas aktif; latih ulang NB04b.")
 
+CHECKPOINT_VERSION = "nb06_video_checkpoint_v1"
 
-def classify_vehicle_condition(roi_image: Image.Image, roi_box: list[float], roi_mask: np.ndarray) -> str:
+
+def file_identity(path: Path) -> dict:
+    stat = path.stat()
+    return {"path": str(path.resolve()), "size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+
+
+def checkpoint_config_signature() -> str:
+    tracker_hash = hashlib.sha256(Path(TRACKER_CONFIG_PATH).read_bytes()).hexdigest()
+    roi_hash = hashlib.sha256((ROI_DIR / "roi_config.json").read_bytes()).hexdigest()
+    config = {
+        "version": CHECKPOINT_VERSION,
+        "yolo_weights": file_identity(WEIGHTS_PATH),
+        "classifier_weights": file_identity(ATTRIBUTE_MODEL_PATH),
+        "thresholds": file_identity(THRESHOLDS_PATH),
+        "tracker_sha256": tracker_hash,
+        "roi_sha256": roi_hash,
+        "sam2_model": SAM2_MODEL_ID,
+        "device": DEVICE,
+        "frame_stride": FRAME_STRIDE,
+        "image_size": IMAGE_SIZE,
+        "confidence_floor": CONF_FLOOR,
+        "nms_iou": NMS_IOU,
+        "min_track_box_side_px": MIN_TRACK_BOX_SIDE_PX,
+        "overlay_labels": OVERLAY_LABELS,
+        "counting_line_ratios": COUNTING_LINE_Y_RATIO_BY_CAMERA,
+    }
+    encoded = json.dumps(config, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+CHECKPOINT_CONFIG_SIGNATURE = checkpoint_config_signature()
+
+
+def video_checkpoint_path(job: dict) -> Path:
+    return VIDEO_CHECKPOINT_DIR / f"{job['video_stem']}.json"
+
+
+def save_video_checkpoint(job: dict, rows: list[dict], summary: dict, audit_rows: list[dict]) -> None:
+    payload = {
+        "status": "complete",
+        "version": CHECKPOINT_VERSION,
+        "config_signature": CHECKPOINT_CONFIG_SIGNATURE,
+        "video_identity": file_identity(Path(job["video_path"])),
+        "video_stem": job["video_stem"],
+        "tracking_rows": rows,
+        "video_summary": summary,
+        "mapping_audit_rows": audit_rows,
+    }
+    path = video_checkpoint_path(job)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def load_video_checkpoint(job: dict) -> tuple[list[dict], dict, list[dict]] | None:
+    path = video_checkpoint_path(job)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("status") != "complete":
+            return None
+        if payload.get("config_signature") != CHECKPOINT_CONFIG_SIGNATURE:
+            return None
+        if payload.get("video_identity") != file_identity(Path(job["video_path"])):
+            return None
+        summary = payload["video_summary"]
+        overlay_path = Path(summary["overlay_path"])
+        if not overlay_path.exists() or overlay_path.stat().st_size == 0:
+            return None
+        capture = cv2.VideoCapture(str(overlay_path))
+        valid_overlay = (
+            capture.isOpened()
+            and int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) == int(summary["frames_processed"])
+        )
+        capture.release()
+        rows = payload["tracking_rows"]
+        if not valid_overlay or len(rows) != int(summary["detections"]):
+            return None
+        return rows, summary, payload.get("mapping_audit_rows", [])
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def classify_vehicle_condition(
+    roi_image: Image.Image, roi_box: list[float], roi_mask: np.ndarray
+) -> tuple[str, int, float]:
     crop = extract_image_crop(roi_image, roi_box)
     image_tensor = IMAGE_TRANSFORM(crop).unsqueeze(0).to(DEVICE)
     raw_features = extract_mask_aware_features(roi_image, roi_box, roi_mask)
@@ -482,8 +578,12 @@ def classify_vehicle_condition(roi_image: Image.Image, roi_box: list[float], roi
     cluster_tensor = torch.from_numpy(cluster_one_hot(cluster_id, len(cluster_centroids))).to(DEVICE)
     with torch.no_grad():
         logits = attribute_model(image_tensor, feature_tensor, cluster_tensor).squeeze(0).cpu().numpy()
-    attributes = decode_attributes(logits, attribute_metadata.get("thresholds"))
-    return next(class_name for class_name, is_selected in attributes.items() if is_selected)
+    attributes = decode_attributes(logits)
+    class_name = next(class_name for class_name, is_selected in attributes.items() if is_selected)
+    class_index = list(attributes).index(class_name)
+    probabilities = np.exp(logits - np.max(logits))
+    probabilities /= max(float(probabilities.sum()), 1e-12)
+    return class_name, int(cluster_id[0]), float(probabilities[class_index])
 
 
 def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
@@ -498,7 +598,7 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
     video_capture = cv2.VideoCapture(job["video_path"])
     tracking_rows = []
     audit_rows = []
-    condition_by_track: dict[int, str] = {}
+    condition_by_track: dict[int, tuple[str, int, float]] = {}
     untracked_detection_count = 0
     invalid_tracker_detection_count = 0
     tracker_recovery_count = 0
@@ -507,7 +607,7 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
     frame_index = 0
     overlay_path = OVERLAY_DIR / f"{job['video_stem']}_overlay.mp4"
     overlay_writer = cv2.VideoWriter(
-        str(overlay_path), cv2.VideoWriter_fourcc(*"avc1"),
+        str(overlay_path), cv2.VideoWriter_fourcc(*"mp4v"),
         float(job["fps"]), (int(job["width"]), int(job["height"])),
     )
     if not overlay_writer.isOpened():
@@ -634,7 +734,7 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                             condition_by_track[track_id] = classify_vehicle_condition(
                                 crop_image, crop_box, segmentation_masks[box_index]
                             )
-                        output_class_name = condition_by_track[track_id]
+                        output_class_name, emeans_cluster_id, classifier_confidence = condition_by_track[track_id]
                         is_nonstandard = output_class_name in {"MobilTidakStandar", "MotorTidakStandar"}
                         is_vehicle = output_class_name in {
                             "MobilStandar", "MobilTidakStandar", "MotorStandar", "MotorTidakStandar"
@@ -659,6 +759,8 @@ def process_video_tracking(job: dict) -> tuple[list[dict], dict, list[dict]]:
                             "frame_index": frame_index,
                             "track_id": track_id,
                             "class_name": output_class_name,
+                            "emeans_cluster_id": emeans_cluster_id,
+                            "classifier_confidence": round(classifier_confidence, SCORE_DECIMALS),
                             "score": round(float(box_scores[box_index]), SCORE_DECIMALS),
                             "frame_x1": round(frame_box[0], RAW_BOX_DECIMALS),
                             "frame_y1": round(frame_box[1], RAW_BOX_DECIMALS),
@@ -691,7 +793,17 @@ all_tracking_rows = []
 video_summaries = []
 mapping_audit_rows = []
 for job in scan_jobs:
-    tracking_rows, video_summary, audit_rows = process_video_tracking(job)
+    checkpoint = load_video_checkpoint(job)
+    if checkpoint is not None:
+        tracking_rows, video_summary, audit_rows = checkpoint
+        display(Markdown(
+            f"`{job['video_stem']}` dipulihkan dari checkpoint: "
+            f"{video_summary['frames_processed']} frame, {video_summary['detections']} deteksi."
+        ))
+    else:
+        tracking_rows, video_summary, audit_rows = process_video_tracking(job)
+        save_video_checkpoint(job, tracking_rows, video_summary, audit_rows)
+        display(Markdown(f"Checkpoint video tersimpan: `{video_checkpoint_path(job)}`"))
     all_tracking_rows.extend(tracking_rows)
     video_summaries.append(video_summary)
     mapping_audit_rows.extend(audit_rows)
@@ -706,7 +818,8 @@ for job in scan_jobs:
 tracking_frame = pd.DataFrame(
     all_tracking_rows,
     columns=[
-        "video_stem", "camera_id", "frame_index", "track_id", "class_name", "score",
+        "video_stem", "camera_id", "frame_index", "track_id", "class_name",
+        "emeans_cluster_id", "classifier_confidence", "score",
         "frame_x1", "frame_y1", "frame_x2", "frame_y2",
     ],
 )
@@ -714,6 +827,116 @@ tracking_frame.to_csv(TRACK_ROWS_PATH, index=False)
 mapping_audit_frame = pd.DataFrame(mapping_audit_rows)
 mapping_audit_frame.to_csv(MAPPING_AUDIT_PATH, index=False)
 video_summary_frame = pd.DataFrame(video_summaries)
+
+# Preview dua frame inferensi per kamera: mask/overlay menampilkan hasil CNN,
+# sedangkan caption merangkum label CNN dan cluster e-means untuk objek di frame.
+import matplotlib.pyplot as plt
+preview_manifest = []
+job_by_stem = {job["video_stem"]: job for job in scan_jobs}
+preview_rows = []
+for video_summary in video_summaries:
+    video_stem = video_summary["video_stem"]
+    camera_id = video_summary["camera_id"]
+    job = job_by_stem[video_stem]
+    video_rows = tracking_frame[tracking_frame["video_stem"] == video_stem]
+    candidate_frames = []
+    if not video_rows.empty:
+        counts = video_rows.groupby("frame_index").size().sort_values(ascending=False)
+        min_gap = max(int(round(float(job["fps"]) * 3)), FRAME_STRIDE)
+        for original_frame, _ in counts.items():
+            if all(abs(int(original_frame) - selected) >= min_gap for selected in candidate_frames):
+                candidate_frames.append(int(original_frame))
+            if len(candidate_frames) == 2:
+                break
+    fallback_overlay_positions = [
+        0,
+        max(0, int(video_summary["frames_processed"]) - 1),
+    ]
+    while len(candidate_frames) < 2:
+        fallback = fallback_overlay_positions[len(candidate_frames)] * FRAME_STRIDE
+        if fallback not in candidate_frames:
+            candidate_frames.append(fallback)
+        elif len(candidate_frames) == 1:
+            candidate_frames.append(max(0, fallback - FRAME_STRIDE))
+        else:
+            break
+
+    capture = cv2.VideoCapture(video_summary["overlay_path"])
+    if not capture.isOpened():
+        raise RuntimeError(f"Overlay tidak bisa dibuka untuk preview: {video_summary['overlay_path']}")
+    camera_panels = []
+    for original_frame in candidate_frames[:2]:
+        overlay_frame_index = min(
+            max(0, int(original_frame // FRAME_STRIDE)),
+            max(0, int(video_summary["frames_processed"]) - 1),
+        )
+        capture.set(cv2.CAP_PROP_POS_FRAMES, overlay_frame_index)
+        ok, preview_frame = capture.read()
+        if not ok:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, preview_frame = capture.read()
+        if not ok:
+            capture.release()
+            raise RuntimeError(f"Tidak dapat membaca frame preview: {video_summary['overlay_path']}")
+        frame_rows = video_rows[video_rows["frame_index"] == original_frame]
+        class_counts = frame_rows["class_name"].value_counts().to_dict() if not frame_rows.empty else {}
+        cluster_counts = frame_rows["emeans_cluster_id"].value_counts().sort_index().to_dict() if not frame_rows.empty else {}
+        class_caption = ", ".join(f"{name}: {count}" for name, count in class_counts.items()) or "tak ada track pada frame"
+        cluster_caption = ", ".join(f"C{cluster}: {count}" for cluster, count in cluster_counts.items()) or "cluster: —"
+        timestamp = float(original_frame) / max(float(job["fps"]), 1e-6)
+        caption = (
+            f"{camera_id} · frame {original_frame} · {timestamp:.1f} dtk\\n"
+            f"CNN: {class_caption}\\ne-means: {cluster_caption}"
+        )
+        camera_panels.append((cv2.cvtColor(preview_frame, cv2.COLOR_BGR2RGB), caption))
+        preview_manifest.append({
+            "camera_id": camera_id,
+            "video_stem": video_stem,
+            "frame_index": int(original_frame),
+            "overlay_frame_index": int(overlay_frame_index),
+            "timestamp_seconds": round(timestamp, 3),
+            "cnn_class_counts": {str(key): int(value) for key, value in class_counts.items()},
+            "emeans_cluster_counts": {str(key): int(value) for key, value in cluster_counts.items()},
+            "detections": [
+                {
+                    "track_id": int(row.track_id),
+                    "class_name": str(row.class_name),
+                    "classifier_confidence": float(row.classifier_confidence),
+                    "emeans_cluster_id": int(row.emeans_cluster_id),
+                }
+                for row in frame_rows.itertuples(index=False)
+            ],
+        })
+    capture.release()
+    camera_figure, camera_axes = plt.subplots(1, 2, figsize=(14, 5))
+    for axis, (preview_frame, caption) in zip(camera_axes, camera_panels):
+        axis.imshow(preview_frame)
+        axis.set_title(caption, fontsize=9)
+        axis.axis("off")
+    camera_figure.suptitle(f"Inferensi CNN + e-means · {camera_id}", fontsize=13)
+    camera_figure.tight_layout()
+    camera_figure.savefig(INFERENCE_PREVIEW_DIR / f"{camera_id}.png", dpi=130)
+    plt.close(camera_figure)
+    preview_rows.append((camera_id, camera_panels))
+
+grid_figure, grid_axes = plt.subplots(len(preview_rows), 2, figsize=(14, max(4, 4.2 * len(preview_rows))), squeeze=False)
+for row_index, (camera_id, panels) in enumerate(preview_rows):
+    for column_index, (preview_frame, caption) in enumerate(panels):
+        axis = grid_axes[row_index, column_index]
+        axis.imshow(preview_frame)
+        axis.set_title(caption, fontsize=8)
+        axis.axis("off")
+grid_figure.suptitle("Dua frame inferensi per titik CCTV · CNN dan e-means", fontsize=15)
+grid_figure.tight_layout(rect=(0, 0, 1, 0.985))
+grid_figure.savefig(INFERENCE_PREVIEW_GRID_PATH, dpi=120)
+plt.close(grid_figure)
+INFERENCE_PREVIEW_MANIFEST_PATH.write_text(
+    json.dumps(preview_manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+)
+display(Markdown(
+    f"Preview inferensi CNN + e-means: **{INFERENCE_PREVIEW_GRID_PATH}** "
+    f"(dua frame untuk {len(preview_rows)} titik CCTV)."
+))
 
 display(Markdown("### Hasil tracking per video"))
 display(video_summary_frame)
@@ -736,102 +959,18 @@ if not SMOKE_MODE and total_tracked == 0 and total_untracked > 0:
         "thresholds.json berada di atas new_track_thresh tracker."
     )'''
 
-COUNT_SOURCE = '''def qualify_by_class_threshold(detection_frame: pd.DataFrame) -> pd.DataFrame:
-    if detection_frame.empty:
-        return detection_frame.copy()
-    threshold_series = detection_frame["class_name"].map(effective_thresholds)
-    return detection_frame[detection_frame["score"] >= threshold_series].copy()
-
-
-def resolve_track_class(track_frame: pd.DataFrame) -> tuple[str, float]:
-    class_stats = track_frame.groupby("class_name")["score"].agg(["count", "mean"])
-    class_stats = class_stats.sort_values(["count", "mean"], ascending=[False, False])
-    return str(class_stats.index[0]), float(class_stats.iloc[0]["mean"])
-
-
-def summarise_units(detection_frame: pd.DataFrame, grouping_column: str) -> pd.DataFrame:
-    unit_rows = []
-    for (video_stem, unit_id), unit_frame in detection_frame.groupby(["video_stem", grouping_column], sort=True):
-        ordered_frame = unit_frame.sort_values("frame_index")
-        first_row = ordered_frame.iloc[0]
-        last_row = ordered_frame.iloc[-1]
-        resolved_class, mean_score = resolve_track_class(ordered_frame)
-        unit_rows.append({
-            "video_stem": video_stem,
-            "unit_id": int(unit_id),
-            "camera_id": first_row["camera_id"],
-            "class_name": resolved_class,
-            "hits": int(len(ordered_frame)),
-            "first_frame": int(first_row["frame_index"]),
-            "last_frame": int(last_row["frame_index"]),
-            "mean_score": round(mean_score, 4),
-            "first_x1": float(first_row["frame_x1"]),
-            "first_y1": float(first_row["frame_y1"]),
-            "first_x2": float(first_row["frame_x2"]),
-            "first_y2": float(first_row["frame_y2"]),
-            "last_x1": float(last_row["frame_x1"]),
-            "last_y1": float(last_row["frame_y1"]),
-            "last_x2": float(last_row["frame_x2"]),
-            "last_y2": float(last_row["frame_y2"]),
-        })
-    return pd.DataFrame(
-        unit_rows,
-        columns=[
-            "video_stem", "unit_id", "camera_id", "class_name", "hits",
-            "first_frame", "last_frame", "mean_score",
-            "first_x1", "first_y1", "first_x2", "first_y2",
-            "last_x1", "last_y1", "last_x2", "last_y2",
-        ],
-    )
-
-
-def detect_line_crossings(detection_frame: pd.DataFrame) -> pd.DataFrame:
-    """Emit one event per non-standard vehicle track when its bbox center crosses its camera line."""
-    line_by_video = {job["video_stem"]: job for job in scan_jobs}
-    crossing_rows = []
-    event_classes = {"MobilTidakStandar", "MotorTidakStandar"}
-    for (video_stem, vehicle_id), unit_frame in detection_frame.groupby(["video_stem", "vehicle_id"], sort=True):
-        ordered = unit_frame.sort_values("frame_index")
-        if len(ordered) < MIN_TRACK_HITS:
-            continue
-        event_class, mean_score = resolve_track_class(ordered)
-        if event_class not in event_classes:
-            continue
-        job = line_by_video[video_stem]
-        crossing = detect_center_line_crossing(
-            ordered.to_dict(orient="records"),
-            line_y=float(job["count_line_y"]),
-            line_x1=float(job["count_line_x1"]),
-            line_x2=float(job["count_line_x2"]),
-            hysteresis=max(3.0, float(job["height"]) * COUNTING_LINE_HYSTERESIS_RATIO),
-            min_hits=MIN_TRACK_HITS,
-        )
-        if crossing is None:
-            continue
-        row = crossing["row"]
-        crossing_rows.append({
-            "video_stem": video_stem,
-            "camera_id": row["camera_id"],
-            "vehicle_id": int(vehicle_id),
-            "track_id": int(row["track_id"]),
-            "class_name": event_class,
-            "score": round(float(row["score"]), 4),
-            "mean_track_score": round(mean_score, 4),
-            "crossing_frame": int(row["frame_index"]),
-            "crossing_direction": crossing["crossing_direction"],
-            "line_y": int(job["count_line_y"]),
-            "frame_x1": float(row["frame_x1"]),
-            "frame_y1": float(row["frame_y1"]),
-            "frame_x2": float(row["frame_x2"]),
-            "frame_y2": float(row["frame_y2"]),
-        })
-    return pd.DataFrame(crossing_rows)
+COUNT_SOURCE = '''from pipeline_common import (
+    detect_line_crossings,
+    qualify_by_class_threshold,
+    resolve_track_class,
+    summarise_units,
+)
 
 
 test_tracking_frame = tracking_frame[
     tracking_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).isin(COUNTED_SPLITS)
 ].copy()
-qualified_frame = qualify_by_class_threshold(test_tracking_frame)
+qualified_frame = qualify_by_class_threshold(test_tracking_frame, effective_thresholds)
 track_frame = summarise_units(qualified_frame, "track_id")
 stitch_lookup = stitch_track_fragments(track_frame)
 track_output = track_frame.merge(
@@ -849,7 +988,7 @@ if vehicle_detections["vehicle_id"].isna().any():
 vehicle_frame = summarise_units(vehicle_detections, "vehicle_id")
 counted_vehicle_frame = vehicle_frame[vehicle_frame["hits"] >= MIN_TRACK_HITS].copy()
 
-presentation_qualified_frame = qualify_by_class_threshold(tracking_frame)
+presentation_qualified_frame = qualify_by_class_threshold(tracking_frame, effective_thresholds)
 presentation_track_frame = summarise_units(presentation_qualified_frame, "track_id")
 presentation_stitch_lookup = stitch_track_fragments(presentation_track_frame)
 presentation_vehicle_detections = presentation_qualified_frame.merge(
@@ -876,9 +1015,16 @@ presentation_timeline_frame["last_timestamp_seconds"] = presentation_timeline_fr
 presentation_timeline_frame["scope"] = presentation_timeline_frame["camera_id"].map(SPLIT_NAME_BY_CAMERA).map(
     lambda split_name: "official" if split_name in COUNTED_SPLITS else "presentation_only"
 )
-event_timeline_frame = presentation_timeline_frame
+event_timeline_frame = presentation_timeline_frame[
+    presentation_timeline_frame["class_name"].isin({"MobilTidakStandar", "MotorTidakStandar"})
+].copy()
 
-crossing_frame = detect_line_crossings(presentation_vehicle_detections)
+crossing_frame = detect_line_crossings(
+    presentation_vehicle_detections,
+    {job["video_stem"]: job for job in scan_jobs},
+    min_track_hits=MIN_TRACK_HITS,
+    hysteresis_ratio=COUNTING_LINE_HYSTERESIS_RATIO,
+)
 if crossing_frame.empty:
     crossing_frame = pd.DataFrame(columns=[
         "video_stem", "camera_id", "vehicle_id", "track_id", "class_name", "score",
@@ -897,7 +1043,7 @@ crossing_frame.to_csv(COUNTING_TIMELINE_PATH, index=False)
 nonstandard_frame = tracking_frame[
     tracking_frame["class_name"].isin({"MobilTidakStandar", "MotorTidakStandar"})
 ].copy()
-bbox_counted_frame = qualify_by_class_threshold(nonstandard_frame)
+bbox_counted_frame = qualify_by_class_threshold(nonstandard_frame, effective_thresholds)
 timeline_frame = bbox_counted_frame.rename(columns={"frame_index": "counting_frame"}).copy()
 timeline_frame["bbox_id"] = (
     timeline_frame["video_stem"].astype(str)
@@ -1028,7 +1174,7 @@ for overlay_info in overlay_manifest:
             cv2.imwrite(str(crop_path), crop_image)
         overlay_capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         clip_writer = cv2.VideoWriter(
-            str(clip_path), cv2.VideoWriter_fourcc(*"avc1"), fps,
+            str(clip_path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
             (int(overlay_capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(overlay_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))),
         )
         if not clip_writer.isOpened():
@@ -1151,6 +1297,9 @@ counting_summary_payload = {
     "selected_thresholds": selected_thresholds,
     "counting_timeline": str(COUNTING_TIMELINE_PATH),
     "overlay_manifest": str(OVERLAY_MANIFEST_PATH),
+    "inference_preview_grid": str(INFERENCE_PREVIEW_GRID_PATH),
+    "inference_preview_manifest": str(INFERENCE_PREVIEW_MANIFEST_PATH),
+    "video_checkpoint_dir": str(VIDEO_CHECKPOINT_DIR),
 }
 COUNTING_SUMMARY_PATH.write_text(
     json.dumps(counting_summary_payload, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -1207,6 +1356,9 @@ aplikasi model, bukan akurasi terverifikasi.
 
 CONVERT_OVERLAY_SOURCE = '''import os
 import json
+import sys
+import shutil
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -1234,6 +1386,9 @@ if manifest_is_list:
 else:
     overlay_rows = overlay_manifest.get("overlays", [])
 BROWSER_OVERLAY_DIR.mkdir(parents=True, exist_ok=True)
+FFMPEG_PATH = shutil.which("ffmpeg")
+if not FFMPEG_PATH:
+    raise RuntimeError("ffmpeg tidak ditemukan di PATH; diperlukan untuk membuat video H.264.")
 
 converted_rows = []
 for item in overlay_rows:
@@ -1244,45 +1399,23 @@ for item in overlay_rows:
         raise FileNotFoundError(f"Overlay sumber tidak ditemukan: {source}")
 
     target = BROWSER_OVERLAY_DIR / source.name
-    capture = cv2.VideoCapture(str(source))
-    if not capture.isOpened():
-        raise RuntimeError(f"Overlay tidak bisa dibaca: {source}")
-
-    fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0)
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    expected_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    writer = cv2.VideoWriter(
-        str(target), cv2.VideoWriter_fourcc(*"avc1"), fps, (width, height)
-    )
-    if not writer.isOpened():
-        capture.release()
+    temporary_target = target.with_name(f"{target.stem}.tmp{target.suffix}")
+    command = [
+        FFMPEG_PATH, "-y", "-i", str(source), "-an", "-c:v", "libx264",
+        "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", str(temporary_target),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or not temporary_target.exists() or temporary_target.stat().st_size == 0:
+        temporary_target.unlink(missing_ok=True)
         raise RuntimeError(
-            "Writer AVC1 tidak tersedia pada environment ini. "
-            "Cek instalasi OpenCV/codec sebelum mengulang cell."
+            f"Konversi H.264 gagal untuk {source}: {result.stderr[-2000:]}"
         )
-
-    written_frames = 0
-    while True:
-        ok, frame = capture.read()
-        if not ok:
-            break
-        writer.write(frame)
-        written_frames += 1
-    capture.release()
-    writer.release()
-
-    if written_frames == 0 or not target.exists() or target.stat().st_size == 0:
-        raise RuntimeError(f"Konversi gagal atau menghasilkan file kosong: {target}")
-    if expected_frames and written_frames != expected_frames:
-        raise RuntimeError(
-            f"Jumlah frame berubah untuk {source.name}: "
-            f"{expected_frames} menjadi {written_frames}"
-        )
+    temporary_target.replace(target)
 
     converted_item = dict(item)
     converted_item["overlay_path"] = str(target)
-    converted_item["codec"] = "avc1"
+    converted_item["codec"] = "H.264 (libx264)"
     converted_item["source_overlay_path"] = str(source)
     converted_rows.append(converted_item)
 
@@ -1299,6 +1432,24 @@ OVERLAY_MANIFEST_PATH.write_text(
 display(Markdown(
     f"**Selesai:** {len(converted_rows)} overlay dikonversi ke AVC1 di "
     f"`{BROWSER_OVERLAY_DIR}`. Video asli tetap ada di folder `overlays`."
+))
+
+# Bebaskan SAM2 dari kernel sebelum helper membuat varian playback dan crop gallery.
+import gc
+if "sam2_model" in globals():
+    del sam2_model
+if "attribute_model" in globals():
+    del attribute_model
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+variant_script = RISET_ROOT / "builders" / "build_nb06_display_variants.py"
+variant_result = subprocess.run([sys.executable, str(variant_script)], check=False)
+if variant_result.returncode != 0:
+    raise RuntimeError(f"Pembuatan mode tampilan dashboard gagal (exit {variant_result.returncode}).")
+display(Markdown(
+    "Mode overlay dan galeri tersedia dengan tampilan mask serta tanpa mask. "
+    "Klasifikasi dan hitungan memakai hasil inferensi yang sama."
 ))'''
 
 

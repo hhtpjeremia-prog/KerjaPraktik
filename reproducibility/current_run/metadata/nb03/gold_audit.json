@@ -1,0 +1,69 @@
+{
+  "smoke_mode": false,
+  "reviewed_frames": 274,
+  "negative_frames": 0,
+  "total_boxes": 3239,
+  "box_source_counts": {
+    "edited": 2072,
+    "manual": 1167
+  },
+  "underrepresented_classes": [],
+  "min_boxes_per_class_warning": 15,
+  "split_summary": [
+    {
+      "split": "train",
+      "frames": 195,
+      "boxes": 2037,
+      "cameras": 2
+    },
+    {
+      "split": "val",
+      "frames": 79,
+      "boxes": 1202,
+      "cameras": 1
+    },
+    {
+      "split": "test",
+      "frames": 0,
+      "boxes": 0,
+      "cameras": 0
+    }
+  ],
+  "class_summary": [
+    {
+      "class_name": "MobilStandar",
+      "boxes": 344,
+      "train_boxes": 135,
+      "val_boxes": 209,
+      "test_boxes": 0
+    },
+    {
+      "class_name": "MobilTidakStandar",
+      "boxes": 467,
+      "train_boxes": 299,
+      "val_boxes": 168,
+      "test_boxes": 0
+    },
+    {
+      "class_name": "MotorStandar",
+      "boxes": 545,
+      "train_boxes": 288,
+      "val_boxes": 257,
+      "test_boxes": 0
+    },
+    {
+      "class_name": "MotorTidakStandar",
+      "boxes": 1006,
+      "train_boxes": 605,
+      "val_boxes": 401,
+      "test_boxes": 0
+    },
+    {
+      "class_name": "PantulanCahaya",
+      "boxes": 877,
+      "train_boxes": 710,
+      "val_boxes": 167,
+      "test_boxes": 0
+    }
+  ]
+}

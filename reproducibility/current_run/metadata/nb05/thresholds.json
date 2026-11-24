@@ -1,0 +1,64 @@
+{
+  "smoke_mode": false,
+  "weights": "D:\\Jere\\NewStyle\\output\\nb04\\runs\\nb04_yolo11n\\weights\\best.pt",
+  "calibration_split": "val",
+  "match_iou": 0.5,
+  "nms_iou": 0.7,
+  "conf_floor": 0.05,
+  "conf_step": 0.05,
+  "val_frames": 79,
+  "selected_thresholds": {
+    "MobilStandar": 0.05,
+    "MobilTidakStandar": 0.2,
+    "MotorStandar": 0.05,
+    "MotorTidakStandar": 0.5,
+    "PantulanCahaya": 0.4
+  },
+  "per_class": [
+    {
+      "class_name": "MobilStandar",
+      "gold_boxes": 209,
+      "selected_threshold": 0.05,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "note": "ok"
+    },
+    {
+      "class_name": "MobilTidakStandar",
+      "gold_boxes": 168,
+      "selected_threshold": 0.2,
+      "precision": 0.3206,
+      "recall": 0.6012,
+      "f1": 0.4182,
+      "note": "ok"
+    },
+    {
+      "class_name": "MotorStandar",
+      "gold_boxes": 257,
+      "selected_threshold": 0.05,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "note": "ok"
+    },
+    {
+      "class_name": "MotorTidakStandar",
+      "gold_boxes": 401,
+      "selected_threshold": 0.5,
+      "precision": 0.4426,
+      "recall": 0.6833,
+      "f1": 0.5373,
+      "note": "ok"
+    },
+    {
+      "class_name": "PantulanCahaya",
+      "gold_boxes": 167,
+      "selected_threshold": 0.4,
+      "precision": 0.3585,
+      "recall": 0.3413,
+      "f1": 0.3497,
+      "note": "ok"
+    }
+  ]
+}

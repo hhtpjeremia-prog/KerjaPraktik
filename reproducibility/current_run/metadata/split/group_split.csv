@@ -1,0 +1,6 @@
+camera_id,camera_title,lat,lng,split
+bogor-kab-bappenda1,Simpang Bappenda - SIMPANG BAPPENDA 1,-6.484866,106.835879,train
+bogor-kab-bappenda2,Simpang Bappenda - SIMPANG BAPPENDA 2,-6.484866,106.835879,test
+bogor-kab-bappenda3,Simpang Bappenda - SIMPANG BAPPENDA 3,-6.484866,106.835879,train
+bogor-kab-pdam2,Simpang PDAM - SIMPANG PDAM 1,-6.482619,106.817786,test
+bogor-kab-pemda2,Simpang Pemda - SIMPANG PEMDA 2,-6.485058,106.843667,val

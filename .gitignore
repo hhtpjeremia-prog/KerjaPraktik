@@ -75,6 +75,12 @@ kritik-saran/
 Nanya/
 Laporan/
 
+# Small reproducibility snapshot tracked for transfer between devices.
+!reproducibility/
+!reproducibility/current_run/
+!reproducibility/current_run/**
+!reproducibility/current_run/models/*.pt
+
 # === OS & System Artifacts ===
 Thumbs.db
 Thumbs.db:encryptable

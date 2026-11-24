@@ -1,12 +1,12 @@
 # Master Dokumentasi â€” Riset HampirMatang
 
-> **Kontrak aktif (2026-11-17; mengesampingkan bagian historis yang bertentangan di bawah).** Anotasi, Grounding DINO base, YOLO, dan CNN memakai lima kelas sama: `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`, `PantulanCahaya`. `BelumDitentukan` bukan kelas model. Continued fine-tune dibatalkan dan notebook-nya dihapus; output lama arsip. Pseudo-label FM boleh masuk train, tidak menggantikan gold validation/test. NB02e membangun mask SAM2 untuk fitur classifier; NB04b memadukan RGB, 77 fitur numerik bbox+mask, dan one-hot e-means yang fit hanya pada train. NB06 menghitung ulang fitur dari mask SAM2 untuk inferensi dan overlay. Mask untuk kelas Standar/TidakStandar tampil; PantulanCahaya menjadi background; bbox/counting hanya kelas TidakStandar. E-means adalah fitur eksperimen, belum terbukti meningkatkan akurasi. Counting utama adalah satu crossing per vehicle track TidakStandar; bbox-per-frame disimpan sebagai metrik pendamping. Garis awal diset pada y=72% tinggi frame, dipotong ke ROI, dan arah crossing dicatat. Dokumen audit superseded dipertahankan di `archive/superseded-project-notes/README.md`.
+> **Kontrak aktif (2026-11-18; mengesampingkan bagian historis yang bertentangan di bawah).** Anotasi, Grounding DINO base, YOLO, dan CNN memakai lima kelas sama: `MobilStandar`, `MobilTidakStandar`, `MotorStandar`, `MotorTidakStandar`, `PantulanCahaya`. `BelumDitentukan` bukan kelas model. Continued fine-tune dibatalkan dan notebook-nya dihapus; output lama arsip. Pseudo-label FM boleh masuk train, tidak menggantikan gold validation/test. NB02e membangun mask SAM2 untuk fitur classifier; NB04b memadukan RGB, 77 fitur numerik bbox+mask, dan one-hot e-means yang fit hanya pada train. NB06 menghitung ulang fitur dari mask SAM2 untuk inferensi dan overlay. Mask untuk kelas Standar/TidakStandar tampil; PantulanCahaya menjadi background; bbox/counting hanya kelas TidakStandar. Preview NB06 menyimpan dua frame inferensi per CCTV dengan ringkasan kelas CNN dan cluster e-means di `output/nb06/inference_preview_grid.png`; rincian per track disimpan dalam manifest preview dan tracking CSV. E-means adalah fitur eksperimen, belum terbukti meningkatkan akurasi. Counting utama adalah satu crossing per vehicle track TidakStandar; bbox-per-frame disimpan sebagai metrik pendamping. Garis awal diset pada y=72% tinggi frame, dipotong ke ROI, dan arah crossing dicatat. NB06 membuat checkpoint atomik per video; saat dilanjutkan, video lengkap dengan checkpoint valid dilewati, sedangkan video terputus diproses ulang dari awal. Pasangan tampilan mask/tanpa-mask dibuat pasca-inferensi dan toggle dashboard hanya presentasi. MQTT belum termasuk implementasi aktif. Dokumen audit superseded dipertahankan di `archive/superseded-project-notes/README.md`.
 
 
 **Proyek:** Deteksi Lampu Kendaraan Malam Hari di Jalan Raya Kabupaten Bogor
 **Dataset:** `CCTV Kab Bogor_ Raya Lintang Kita (Rawamurang) (2026-08-01)`
 **Repo lokal:** `TugasJere/KerjaPraktik/Riset-HampirMatang/`
-**Revisi terakhir:** 2026-11-17 (Ponytail Audit 2; mask-quality guard; e-means k-selection; reproducible checks)
+**Revisi terakhir:** 2026-11-18 (Ponytail Audit 3; notebook-source gate; pemulihan dan isolasi smoke; refactor logic counting; prosedur rerun NB05→NB06)
 
 > **Catatan historis 2026-11-12.** Dokumen Ponytail terkait dipertahankan di `archive/superseded-project-notes/`; implementasi aktif dan panduan rerun tercantum di README dan builders. Temuan ROI pada waktu itu memperbaiki metadata store/COCO dan export YOLO lokal; rincian historis tidak menjadi petunjuk rerun untuk perubahan terkini.
 
@@ -654,7 +654,7 @@ Riset-HampirMatang/
 | File | Fungsi |
 |---|---|
 | `builders/build_nb02_pseudo_label.py` | Merender `NB02_pseudo_label.ipynb` (5 sel kode + 1 markdown). Memuat logika DINO-only multi-pass (Mode B) + Mode A grouping. SAM dihapus. |
-| `builders/manual_check_nb02.py` | Pemeriksaan manual logika crop polygon + grouping + aturan kelas. Dijalankan manual; **bukan** test otomatis (test otomatis ada di `test_pipeline_logic.py`). |
+| `archive/one-off-scripts/manual_check_nb02.py` | Pemeriksaan manual historis; bukan bagian pipeline aktif. Test aktif ada di `test_pipeline_logic.py`. |
 | `builders/build_roi_config.py` | Tool interaktif pemilihan polygon ROI per kamera + konstanta ROI. |
 | `builders/build_nb01_acquisition.py` | Scraping katalog, ekstraksi frame, group split, template ROI. |
 
@@ -1314,7 +1314,7 @@ Empat keputusan pemilik riset, menutup Â§13 butir 9 dan blok "belum ditetapkan
 | Kasus ragu | `BelumDitentukan`, memblokir export |
 
 **Kenapa silau bukan ambang.** Diukur 2026-10-28 pada gold set saat itu (78 frame
-reviewed, 1.125 box aktif) memakai `builders/probe_label_definition.py`; CSV mentah di
+reviewed, 1.125 box aktif) memakai `archive/one-off-scripts/probe_label_definition.py`; CSV mentah di
 `output/annotation/label_probe.csv`.
 
 | Fitur | Ambang terbaik | Silau tertangkap | Normal ikut tertandai | Pantulan ikut |
@@ -1364,7 +1364,7 @@ pantulan dan lampu rem.
 > kendaraan. Tidak ada kendaraan yang hanya tampak belakang di data, jadi aturan khusus
 > tidak diperlukan dan "jumlah kendaraan" tidak kehilangan arah menjauh.
 
-**Hasil mining kandidat biru (2026-10-28).** `builders/mine_blue_candidates.py` mengukur
+**Hasil mining kandidat biru (2026-10-28).** `archive/one-off-scripts/mine_blue_candidates.py` mengukur
 seluruh 4.309 box pseudo-label di 1.474 crop, ambang definisi (`Sâ‰¥80`, `Vâ‰¥80`, hue 95â€“135):
 
 | Tahap | Box | Frame |

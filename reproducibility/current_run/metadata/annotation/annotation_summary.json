@@ -1,0 +1,45 @@
+{
+  "sample_total_frames": 274,
+  "reviewed_frames": 274,
+  "random_seed": 20261020,
+  "excluded_splits": [
+    "test"
+  ],
+  "split_by_camera": {
+    "bogor-kab-bappenda1": "train",
+    "bogor-kab-bappenda2": "test",
+    "bogor-kab-bappenda3": "train",
+    "bogor-kab-pdam2": "test",
+    "bogor-kab-pemda2": "val"
+  },
+  "class_names": [
+    "MobilStandar",
+    "MobilTidakStandar",
+    "MotorStandar",
+    "MotorTidakStandar",
+    "PantulanCahaya"
+  ],
+  "box_source_counts": {
+    "pseudo": 0,
+    "manual": 1167,
+    "edited": 2073
+  },
+  "class_box_counts": {
+    "MobilStandar": 344,
+    "MobilTidakStandar": 467,
+    "MotorStandar": 545,
+    "MotorTidakStandar": 1007,
+    "PantulanCahaya": 877,
+    "BelumDitentukan": 0
+  },
+  "coco_annotations": 3240,
+  "coco_path": "D:\\Jere\\NewStyle\\output\\annotation\\annotations_coco.json",
+  "split_map_path": "D:\\Jere\\NewStyle\\output\\annotation\\yolo\\split_map.csv",
+  "gold_images": 274,
+  "gold_labels": 274,
+  "gold_boxes": 2363,
+  "gold_boxes_by_class": {
+    "Mobil": 811,
+    "Motor": 1552
+  }
+}

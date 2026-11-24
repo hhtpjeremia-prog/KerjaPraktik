@@ -86,8 +86,9 @@ manual lama. Proposal FM di luar lima kelas aktif ditolak, bukan diubah menjadi 
 > `data.yaml` **tidak** ditulis di sini. Dataset latih dimaterialisasi NB04 dari gold store
 > dengan split per kamera; menulis `train: images` di sini hanya mengundang kebocoran.
 
-Mode penuh menargetkan **1.016 frame train/validation** (826/190) dan mengecualikan semua frame
-test dari manifest anotasi ini. Angka target hanya tercapai setelah semua proposal NB02d direview.
+Mode penuh memakai target sampling yang dapat diatur lewat `NB02B_SAMPLE_TOTAL_FRAMES` (default awal
+1.016) dan mengecualikan semua frame test. Jumlah train/validation aktual mengikuti kandidat yang
+tersedia per kamera dan dicatat di manifest; tidak dipatok ke komposisi historis 826/190.
 
 Output: `output/annotation/{sample_manifest.json, annotations.json, annotations_coco.json,
 annotation_summary.json, yolo/}`.
@@ -103,7 +104,7 @@ import os
 from PIL import Image
 from IPython.display import Markdown, display
 
-from pipeline_common import CLASS_NAMES, PENDING_CLASS_NAME, SPLIT_NAME_BY_CAMERA, TRAINING_CLASS_NAMES, build_roi_crop, filter_store_frames, load_roi_config, training_class_name
+from pipeline_common import CLASS_NAMES, PENDING_CLASS_NAME, SPLIT_NAME_BY_CAMERA, TRAINING_CLASS_NAMES, allocate_protected_sample_quota, build_roi_crop, filter_store_frames, load_roi_config, training_class_name
 
 from pipeline_common import resolve_project_root
 RISET_ROOT = resolve_project_root(Path(os.environ.get("RISET_PROJECT_ROOT", Path.cwd())))
@@ -152,7 +153,7 @@ CLASS_COLOR_BY_TOGGLE = {
 CLASS_NAME_BY_TOGGLE = dict(zip(CLASS_TOGGLE_LABELS, STORE_CLASS_NAMES))
 CLASS_TOGGLE_BY_NAME = dict(zip(STORE_CLASS_NAMES, CLASS_TOGGLE_LABELS))
 
-SAMPLE_TOTAL_FRAMES = 12 if SMOKE_MODE else 1016
+SAMPLE_TOTAL_FRAMES = 12 if SMOKE_MODE else int(os.environ.get("NB02B_SAMPLE_TOTAL_FRAMES", "1016"))
 RANDOM_SEED = 20261020
 MIN_SAMPLE_GAP_FRAMES = 30
 SAMPLE_EXCLUDED_SPLITS = ["test"]
@@ -333,25 +334,6 @@ def build_image_candidates(chunk_rows: list[dict], crop_dir: Path) -> list[dict]
     return list(candidates_by_stem.values())
 
 
-def allocate_sample_quota(camera_counts: dict[str, int], total_frames: int) -> dict[str, int]:
-    eligible_total = sum(camera_counts.values())
-    if eligible_total == 0:
-        return {camera_id: 0 for camera_id in camera_counts}
-    target_total = min(total_frames, eligible_total)
-    quotas = {
-        camera_id: target_total * camera_count // eligible_total
-        for camera_id, camera_count in camera_counts.items()
-    }
-    remainder = target_total - sum(quotas.values())
-    fractional_order = sorted(
-        camera_counts,
-        key=lambda camera_id: (-(camera_counts[camera_id] % eligible_total), camera_id),
-    )
-    for camera_id in fractional_order[:remainder]:
-        quotas[camera_id] += 1
-    return quotas
-
-
 def sample_frame_number(frame_record: dict) -> int:
     return int(Path(frame_record["frame_path"]).stem.split("_")[-1])
 
@@ -367,15 +349,29 @@ def stratified_sample_frame_records(
     candidates_by_camera: dict[str, list[dict]] = {}
     for candidate in candidates:
         candidates_by_camera.setdefault(candidate["camera_id"], []).append(candidate)
-    camera_counts = {camera_id: len(camera_rows) for camera_id, camera_rows in sorted(candidates_by_camera.items())}
-    quotas = allocate_sample_quota(camera_counts, total_frames)
+    protected_by_camera = {
+        camera_id: [row for row in camera_rows if row["frame_stem"] in protected_frame_stems]
+        for camera_id, camera_rows in candidates_by_camera.items()
+    }
+    protected_counts = {camera_id: len(rows) for camera_id, rows in protected_by_camera.items()}
+    selected_target = min(total_frames, len(candidates))
+    try:
+        camera_quotas = allocate_protected_sample_quota(
+            {camera_id: len(rows) for camera_id, rows in candidates_by_camera.items()},
+            protected_counts,
+            selected_target,
+        )
+    except ValueError as error:
+        raise ValueError(
+            f"Tidak dapat mempertahankan frame review dalam target NB02b: {error}. "
+            "Naikkan NB02B_SAMPLE_TOTAL_FRAMES."
+        ) from error
     random_generator = random.Random(random_seed)
     sampled_records = []
     for camera_id, camera_rows in sorted(candidates_by_camera.items()):
         ordered_rows = sorted(camera_rows, key=lambda candidate: candidate["frame_stem"])
-        camera_quota = quotas[camera_id]
-        protected_rows = [row for row in ordered_rows if row["frame_stem"] in protected_frame_stems]
-        camera_quota = max(camera_quota, len(protected_rows))
+        protected_rows = protected_by_camera[camera_id]
+        camera_quota = camera_quotas[camera_id]
         if camera_quota >= len(ordered_rows):
             selected_rows = ordered_rows
         else:
@@ -383,6 +379,8 @@ def stratified_sample_frame_records(
             random_generator.shuffle(shuffled_rows)
             selected_rows = protected_rows.copy()
             for candidate in shuffled_rows:
+                if len(selected_rows) >= camera_quota:
+                    break
                 if candidate["frame_stem"] in protected_frame_stems:
                     continue
                 candidate_frame_number = sample_frame_number(candidate)
@@ -391,7 +389,7 @@ def stratified_sample_frame_records(
                     for selected in selected_rows
                 ):
                     selected_rows.append(candidate)
-                if len(selected_rows) == camera_quota:
+                if len(selected_rows) >= camera_quota:
                     break
             if len(selected_rows) < camera_quota:
                 raise ValueError(
@@ -500,6 +498,10 @@ def build_or_load_sample_manifest(
             old_settings = json.load(old_manifest_file)
         if old_settings.get("candidate_frame_total") != len(candidates):
             manifest_reused = False
+        if old_settings.get("sample_total_frames") != total_frames:
+            manifest_reused = False
+        if len(old_settings.get("frames", [])) != min(total_frames, len(candidates)):
+            manifest_reused = False
         if old_settings.get("nb02d_proposal_signature") != proposal_signature:
             manifest_reused = False
     if manifest_reused and protected_frame_stems:
@@ -529,12 +531,6 @@ def build_or_load_sample_manifest(
                 f"Manifest lama memakai kelas {installed_class_names}, konfigurasi sekarang {CLASS_NAMES}. "
                 f"Hapus {manifest_path} lalu jalankan ulang sel ini."
             )
-        installed_total_frames = manifest_payload.get("sample_total_frames")
-        if installed_total_frames != total_frames:
-            raise ValueError(
-                f"Manifest lama memakai sample_total_frames {installed_total_frames}, konfigurasi sekarang {total_frames}. "
-                f"Hapus {manifest_path} lalu jalankan ulang sel ini."
-            )
         installed_random_seed = manifest_payload.get("random_seed")
         if installed_random_seed != random_seed:
             raise ValueError(
@@ -551,18 +547,17 @@ def build_or_load_sample_manifest(
             sample_records = stratified_sample_frame_records(
                 candidates, total_frames, random_seed, MIN_SAMPLE_GAP_FRAMES, protected_frame_stems
             )
-        if not SMOKE_MODE and excluded_splits == ["test"]:
-            final_split_counts = {
-                split_name: sum(SPLIT_NAME_BY_CAMERA[item["camera_id"]] == split_name for item in sample_records)
-                for split_name in ("train", "val")
-            }
-            if final_split_counts != {"train": 826, "val": 190}:
-                raise ValueError(
-                    f"Komposisi frame reviewed target harus train/val 826/190, aktual {final_split_counts}. "
-                    "Periksa baseline reviewed dan proposal NB02d sebelum anotasi/export."
-                )
+        expected_sample_total = min(total_frames, len(candidates))
+        if len(sample_records) != expected_sample_total:
+            protected_count = sum(item["frame_stem"] in protected_frame_stems for item in sample_records)
+            raise ValueError(
+                f"Sampling menghasilkan {len(sample_records)} frame, target efektif {expected_sample_total}. "
+                f"Frame yang dilindungi/review: {protected_count}. Atur NB02B_SAMPLE_TOTAL_FRAMES "
+                "agar cukup menampung frame terlindungi atau sesuaikan ketersediaan kandidat."
+            )
         manifest_payload = {
             "sample_total_frames": total_frames,
+            "selected_frame_total": len(sample_records),
             "random_seed": random_seed,
             "min_sample_gap_frames": MIN_SAMPLE_GAP_FRAMES,
             "excluded_splits": excluded_splits,

@@ -339,7 +339,6 @@ def prepare_feature_encodings(examples: list[Example], model_dir: Path):
     selection_frame = pd.DataFrame(selection_rows)
     selection_frame["bic_delta_to_linear"] = np.nan
     selection_frame["selected"] = False
-    selection_frame.to_csv(selection_path, index=False)
     selected_k, elbow_scores = elbow_k_from_objectives(
         [row["k"] for row in selection_rows],
         [row["mean_train_objective"] for row in selection_rows],
@@ -372,9 +371,92 @@ def prepare_feature_encodings(examples: list[Example], model_dir: Path):
         seed=EMEANS_SEED,
     )
     train_labels = assign_e_means_clusters(train_normalized, centroids)
-    labels_by_mask = assign_e_means_clusters(np.stack(list(normalized.values())), centroids)
+    mask_ids = list(normalized)
+    normalized_matrix = np.stack([normalized[mask_id] for mask_id in mask_ids])
+    labels_by_mask = assign_e_means_clusters(normalized_matrix, centroids)
     onehots = cluster_one_hot(labels_by_mask, len(centroids))
     cluster_by_mask = dict(zip(normalized.keys(), onehots))
+    split_by_mask = {}
+    for example in examples:
+        previous_split = split_by_mask.setdefault(example.mask_id, example.split)
+        if previous_split != example.split:
+            raise ValueError(f"Mask {example.mask_id} muncul di lebih dari satu split.")
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
+
+        mask_index_by_id = {mask_id: index for index, mask_id in enumerate(mask_ids)}
+        train_indices = [mask_index_by_id[mask_id] for mask_id in train_mask_ids]
+        train_features = normalized_matrix[train_indices]
+        pca_center = train_features.mean(axis=0)
+        centered_train = train_features - pca_center
+        covariance = centered_train.T @ centered_train
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+        order = np.argsort(eigenvalues)[::-1]
+        components = eigenvectors[:, order[:2]]
+        projected = (normalized_matrix - pca_center) @ components
+        total_variance = max(float(eigenvalues.sum()), 1e-12)
+        explained = np.maximum(eigenvalues[order[:2]], 0) / total_variance * 100
+        projection_frame = pd.DataFrame({
+            "mask_id": mask_ids,
+            "split": [split_by_mask[mask_id] for mask_id in mask_ids],
+            "cluster_id": labels_by_mask.astype(int),
+            "pc1": projected[:, 0],
+            "pc2": projected[:, 1],
+        })
+        projection_csv = model_dir / "emeans_pca_projection.csv"
+        projection_png = model_dir / "emeans_pca_scatter.png"
+        projection_frame.to_csv(projection_csv, index=False)
+
+        figure, axis = plt.subplots(figsize=(10, 7))
+        palette = plt.get_cmap("tab20", len(centroids))
+        split_markers = {"train": "o", "val": "^", "test": "s"}
+        for cluster_id in range(len(centroids)):
+            for split_name, marker in split_markers.items():
+                selected = projection_frame[
+                    (projection_frame["cluster_id"] == cluster_id)
+                    & (projection_frame["split"] == split_name)
+                ]
+                if selected.empty:
+                    continue
+                axis.scatter(
+                    selected["pc1"], selected["pc2"],
+                    s=11 if split_name == "train" else 22,
+                    alpha=0.32 if split_name == "train" else 0.78,
+                    marker=marker, color=palette(cluster_id), linewidths=0.35,
+                )
+        cluster_handles = [
+            Line2D([0], [0], marker="o", linestyle="", color=palette(index),
+                   label=f"Cluster {index}", markersize=6)
+            for index in range(len(centroids))
+        ]
+        split_handles = [
+            Line2D([0], [0], marker=marker, linestyle="", color="#444444",
+                   label=split_name, markersize=6)
+            for split_name, marker in split_markers.items()
+            if split_name in set(projection_frame["split"])
+        ]
+        cluster_legend = axis.legend(handles=cluster_handles, title="e-means", loc="upper right", ncol=2)
+        axis.add_artist(cluster_legend)
+        axis.legend(handles=split_handles, title="Split", loc="lower right")
+        axis.set_title(
+            "Proyeksi PCA fitur e-means (PCA di-fit hanya pada train)\n"
+            "Proyeksi 2D untuk inspeksi; e-means tetap bekerja pada 77 fitur"
+        )
+        axis.set_xlabel(f"PC1 ({explained[0]:.1f}% variansi train)")
+        axis.set_ylabel(f"PC2 ({explained[1]:.1f}% variansi train)")
+        axis.grid(alpha=0.18)
+        figure.tight_layout()
+        figure.savefig(projection_png, dpi=150)
+        plt.close(figure)
+        cluster_metadata["pca_preview"] = {
+            "plot": projection_png.resolve().relative_to(ROOT).as_posix(),
+            "projection_csv": projection_csv.resolve().relative_to(ROOT).as_posix(),
+            "fit_split": "train_only",
+            "interpretation": "2D visualization only; clustering uses original 77-dimensional features",
+        }
+    except Exception as error:
+        print(f"Peringatan: gagal membuat scatter PCA e-means: {error}")
     cluster_metadata["train_cluster_counts"] = {
         str(index): int((train_labels == index).sum()) for index in range(len(centroids))
     }
@@ -469,9 +551,6 @@ def main(*, output_dir: Path | None = None, include_test_eval: bool = True) -> N
     model.load_state_dict(best_state)
     test_metrics = evaluate(model, test_loader, loss_function)
     history = pd.DataFrame(history_rows)
-    if test_metrics:
-        for key, value in test_metrics.items():
-            history[f"test_{key}"] = value
     model_dir.mkdir(parents=True, exist_ok=True)
     history_path = model_dir / "training_history.csv"
     plot_path = model_dir / "training_curves.png"

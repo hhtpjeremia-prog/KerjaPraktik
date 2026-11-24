@@ -1,0 +1,33 @@
+{
+  "smoke_mode": false,
+  "model_weights": "yolo11n.pt",
+  "run_name": "nb04_yolo11n",
+  "class_names": [
+    "MobilStandar",
+    "MobilTidakStandar",
+    "MotorStandar",
+    "MotorTidakStandar",
+    "PantulanCahaya"
+  ],
+  "split_source": "D:\\Jere\\NewStyle\\output\\annotation\\yolo\\split_map.csv",
+  "data_yaml": "D:\\Jere\\NewStyle\\output\\nb04\\dataset\\data.yaml",
+  "dataset_frames": 905,
+  "pseudo_train_frames": 631,
+  "pseudo_train_boxes": 10758,
+  "arguments": {
+    "data": "D:\\Jere\\NewStyle\\output\\nb04\\dataset\\data.yaml",
+    "epochs": 60,
+    "imgsz": 640,
+    "batch": 8,
+    "device": "cpu",
+    "project": "D:\\Jere\\NewStyle\\output\\nb04\\runs",
+    "name": "nb04_yolo11n",
+    "seed": 20261026,
+    "workers": 0,
+    "patience": 20,
+    "exist_ok": true,
+    "plots": true
+  },
+  "best_weights": "D:\\Jere\\NewStyle\\output\\nb04\\runs\\nb04_yolo11n\\weights\\best.pt",
+  "best_weights_exists": true
+}

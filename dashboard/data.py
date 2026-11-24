@@ -17,7 +17,6 @@ from pipeline_common import (
     CLASS_NAMES,
     COUNT_CONTRACT,
     SPLIT_NAME_BY_CAMERA,
-    TRAINING_CLASS_NAMES,
 )
 
 DEFAULT_NB06_ROOT = PROJECT_ROOT / "output" / "nb06"
@@ -49,11 +48,6 @@ NOT_AVAILABLE_LABEL = "n/a"
 THOUSAND_SEPARATOR = "."
 THOUSAND_SUFFIXES = ((1_000_000.0, "M"), (1_000.0, "k"))
 SUFFIX_DECIMAL_PLACES = 1
-
-MEASURABLE_CONTRACT_KEYS = [
-    contract_key for contract_key in COUNT_CONTRACT
-]
-
 
 @dataclass(frozen=True)
 class CountingSnapshot:
@@ -93,11 +87,11 @@ def build_camera_table(per_video_frame: pd.DataFrame) -> pd.DataFrame:
         .rename(VIDEOS_COUNTED_COLUMN)
         .reset_index()
     )
-    measured_columns = list(dict.fromkeys(
+    measured_columns = [
         column_name
-        for column_name in (CROSSINGS_COUNTED_COLUMN, *CLASS_NAMES, *TRAINING_CLASS_NAMES, *MEASURABLE_CONTRACT_KEYS)
+        for column_name in (CROSSINGS_COUNTED_COLUMN, *CLASS_NAMES, *COUNT_CONTRACT.keys())
         if column_name in per_video_frame.columns
-    ))
+    ]
     if not measured_columns:
         return video_counts
     numeric_frame = per_video_frame[[CAMERA_ID_COLUMN, *measured_columns]].copy()
@@ -179,7 +173,7 @@ def load_counting_snapshot(nb06_root: Path | None = None) -> CountingSnapshot:
             per_video_frame = pd.read_csv(nb06_root / COUNTING_BY_VIDEO_FILENAME)
         except pd.errors.EmptyDataError:
             per_video_frame = pd.DataFrame(
-                columns=[VIDEO_STEM_COLUMN, CAMERA_ID_COLUMN, CROSSINGS_COUNTED_COLUMN, *CLASS_NAMES, *MEASURABLE_CONTRACT_KEYS]
+                columns=[VIDEO_STEM_COLUMN, CAMERA_ID_COLUMN, CROSSINGS_COUNTED_COLUMN, *CLASS_NAMES, *COUNT_CONTRACT.keys()]
             )
     except (OSError, ValueError) as artifact_error:
         return CountingSnapshot(

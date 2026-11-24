@@ -230,8 +230,8 @@ display(Markdown(
 '''
 
 
-def main() -> None:
-    notebook = nbformat.v4.new_notebook(
+def build_notebook() -> nbformat.NotebookNode:
+    return nbformat.v4.new_notebook(
         cells=[
             nbformat.v4.new_markdown_cell(MARKDOWN),
             nbformat.v4.new_code_cell(CONFIG),
@@ -239,6 +239,8 @@ def main() -> None:
         ],
         metadata={"kernelspec": {"name": "python3", "display_name": "Python 3"}, "language_info": {"name": "python"}},
     )
+def main() -> None:
+    notebook = build_notebook()
     nbformat.write(notebook, OUTPUT)
     loaded = nbformat.read(OUTPUT, as_version=4)
     nbformat.validate(loaded)

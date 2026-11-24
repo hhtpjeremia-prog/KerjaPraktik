@@ -34,9 +34,13 @@ CLASS_LABELS = {
     "PantulanCahaya": "Pantulan cahaya",
 }
 
-EVENT_COLORS = {
-    "TidakStandar": "#FF0000",
-}
+SNAPSHOT_ARTIFACTS = (
+    "counting_summary.json",
+    "counting_by_video.csv",
+    "counting_timeline.csv",
+    "overlay_manifest.json",
+    "event_clip_manifest.json",
+)
 
 STYLE_BLOCK = """
 <style>
@@ -55,7 +59,7 @@ def main() -> None:
     st.set_page_config(page_title=PAGE_TITLE, layout="wide")
     st.markdown(STYLE_BLOCK, unsafe_allow_html=True)
     st.sidebar.caption(f"Sumber artefak NB06: `{resolve_nb06_root().resolve()}`")
-    snapshot = load_counting_snapshot()
+    snapshot = load_cached_counting_snapshot()
     render_header(snapshot.summary)
     if not render_state_notice(snapshot):
         return
@@ -64,9 +68,7 @@ def main() -> None:
     st.divider()
     render_playback(snapshot)
     st.divider()
-    footage_tab = st.tabs(["Footage per kelas"])[0]
-    with footage_tab:
-        render_event_footage(snapshot)
+    render_event_footage(snapshot)
     st.divider()
     render_model_validation(snapshot)
     st.divider()
@@ -74,10 +76,31 @@ def main() -> None:
     st.divider()
     render_contract_section(snapshot.summary)
     st.divider()
-    render_class_section(snapshot.summary)
     st.divider()
     render_quality_section(snapshot.summary)
     render_footer()
+
+
+def snapshot_fingerprint(root: Path) -> tuple[tuple[str, int | None, int | None], ...]:
+    fingerprints = []
+    for name in SNAPSHOT_ARTIFACTS:
+        try:
+            stat = (root / name).stat()
+            fingerprints.append((name, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            fingerprints.append((name, None, None))
+    return tuple(fingerprints)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _load_counting_snapshot_cached(root_value: str, fingerprint: tuple) -> CountingSnapshot:
+    del fingerprint  # Fingerprints participate in Streamlit's cache key.
+    return load_counting_snapshot(Path(root_value))
+
+
+def load_cached_counting_snapshot() -> CountingSnapshot:
+    root = resolve_nb06_root().resolve()
+    return _load_counting_snapshot_cached(str(root), snapshot_fingerprint(root))
 
 
 def render_header(summary: dict | None) -> None:
@@ -166,7 +189,22 @@ def render_playback(snapshot: CountingSnapshot) -> None:
         "Video overlay", filtered_manifest["video_stem"].tolist(), key="playback_video"
     )
     video_row = filtered_manifest[filtered_manifest["video_stem"] == selected_video].iloc[0]
-    video_path = Path(video_row["overlay_path"])
+    with_mask_value = str(video_row.get("overlay_path_with_mask", "")).strip()
+    without_mask_value = str(video_row.get("overlay_path_without_mask", "")).strip()
+    has_mask_pair = bool(with_mask_value and without_mask_value and with_mask_value.lower() != "nan" and without_mask_value.lower() != "nan")
+    if has_mask_pair:
+        mask_view = st.radio(
+            "Tampilan segmentasi", ["Mask tampil", "Mask disembunyikan"],
+            horizontal=True, key="playback_mask_view",
+        )
+        video_path_value = video_row[
+            "overlay_path_with_mask" if mask_view == "Mask tampil" else "overlay_path_without_mask"
+        ]
+        st.caption("Pilihan ini hanya mengubah tampilan; CNN tetap memakai fitur mask untuk klasifikasi.")
+    else:
+        video_path_value = video_row.get("overlay_path_with_mask", video_row.get("overlay_path", ""))
+        st.info("Pilihan mask akan aktif setelah NB06 menyediakan video overlay dengan dan tanpa mask.")
+    video_path = Path(str(video_path_value))
     if not video_path.is_absolute():
         video_path = PROJECT_ROOT / video_path
     video_timeline = snapshot.timeline_frame[
@@ -205,13 +243,6 @@ def render_playback(snapshot: CountingSnapshot) -> None:
             st.caption(f"Arah: turun {directions.get('down', 0)} · naik {directions.get('up', 0)}")
         st.markdown("**Arti warna bbox dan tipe kendaraan**")
         render_class_legend()
-    class_counts = pd.Series(
-        {
-            "Mobil tidak standar": int(visible_timeline["class_name"].isin({"MobilTidakStandar"}).sum()),
-            "Motor tidak standar": int(visible_timeline["class_name"].isin({"MotorTidakStandar"}).sum()),
-        }
-    )
-    st.bar_chart(pd.DataFrame({"Track melintasi garis": class_counts}), height=220)
     if not visible_timeline.empty:
         st.dataframe(
             visible_timeline.sort_values(timeline_frame_column)[
@@ -225,7 +256,7 @@ def render_playback(snapshot: CountingSnapshot) -> None:
 def render_class_legend() -> None:
     legend_rows = [
         f'<div style="display:flex;align-items:center;gap:.45rem;margin:.2rem 0;">'
-        f'<span style="width:12px;height:12px;background:{EVENT_COLORS["TidakStandar"]};display:inline-block;"></span>'
+        '<span style="width:12px;height:12px;background:#FF0000;display:inline-block;"></span>'
         '<span>Merah = lampu tidak standar (mobil atau motor)</span></div>',
         '<div style="display:flex;align-items:center;gap:.45rem;margin:.2rem 0;">'
         '<span style="width:12px;height:12px;background:transparent;display:inline-block;outline:1px solid currentColor;"></span>'
@@ -405,12 +436,29 @@ def render_event_footage(snapshot: CountingSnapshot) -> None:
 
 def render_event_gallery(filtered: pd.DataFrame) -> None:
     gallery_tab, grid_tab = st.tabs(["Detail event", "Grid 8 × 8"])
+    mask_columns_available = False
+    if "crop_path_with_mask" in filtered.columns and "crop_path_without_mask" in filtered.columns:
+        crop_values = filtered[["crop_path_with_mask", "crop_path_without_mask"]].fillna("").astype(str)
+        mask_columns_available = bool(crop_values.apply(lambda column: column.str.strip().ne("").any()).all())
+    if mask_columns_available:
+        mask_view = st.radio(
+            "Tampilan segmentasi crop", ["Mask tampil", "Mask disembunyikan"],
+            horizontal=True, key="gallery_mask_view",
+        )
+        crop_column = "crop_path_with_mask" if mask_view == "Mask tampil" else "crop_path_without_mask"
+        st.caption("Pilihan ini hanya mengubah tampilan crop; hasil klasifikasi dan hitungan tetap sama.")
+    else:
+        crop_column = "crop_path"
+        st.info("Pasangan crop dengan dan tanpa mask akan tersedia setelah NB06 membangun artefak galeri.")
     with gallery_tab:
         if "gallery_index" not in st.session_state or st.session_state.gallery_index >= len(filtered):
             st.session_state.gallery_index = 0
         selected_index = st.session_state.gallery_index
         selected_clip = filtered.iloc[selected_index]
-        crop_path = Path(str(selected_clip.get("crop_path", "")))
+        crop_value = selected_clip.get(crop_column, "")
+        if pd.isna(crop_value) or not str(crop_value).strip():
+            crop_value = selected_clip.get("crop_path", "") if crop_column == "crop_path_without_mask" else ""
+        crop_path = Path(str(crop_value))
         if not crop_path.is_absolute():
             crop_path = PROJECT_ROOT / crop_path
         image_column, detail_column = st.columns([1.25, 1], gap="large")
@@ -444,11 +492,14 @@ def render_event_gallery(filtered: pd.DataFrame) -> None:
         for start in range(0, len(page_frame), 8):
             columns = st.columns(8, gap="small")
             for column, (_, item) in zip(columns, page_frame.iloc[start:start + 8].iterrows()):
-                item_path = Path(str(item.get("crop_path", "")))
-                if not item_path.is_absolute():
+                item_value = item.get(crop_column, "")
+                if pd.isna(item_value) or not str(item_value).strip():
+                    item_value = item.get("crop_path", "") if crop_column == "crop_path_without_mask" else ""
+                item_path = Path(str(item_value)) if str(item_value).strip() else None
+                if item_path is not None and not item_path.is_absolute():
                     item_path = PROJECT_ROOT / item_path
                 with column:
-                    if item_path.exists():
+                    if item_path is not None and item_path.exists():
                         st.image(str(item_path), caption=f"ID {item['vehicle_id']}\n{CLASS_LABELS.get(item['class_name'], item['class_name'])}", use_container_width=True)
 
 
@@ -512,20 +563,6 @@ def render_contract_section(summary: dict) -> None:
         hide_index=True,
         width="stretch",
     )
-def render_class_section(summary: dict) -> None:
-    st.subheader("Track tidak standar melintasi garis per tipe kendaraan")
-    class_counts = summary.get("event_class_counts", {})
-    class_frame = pd.DataFrame(
-        {"Jumlah crossing": [
-            sum(int(class_counts.get(class_name, 0)) for class_name in ("MobilTidakStandar",)),
-            sum(int(class_counts.get(class_name, 0)) for class_name in ("MotorTidakStandar",)),
-        ]},
-        index=["Mobil tidak standar", "Motor tidak standar"],
-    )
-    st.bar_chart(class_frame, height=280)
-    st.caption("Satu track hanya dihitung sekali per video. Kendaraan standar dan pantulan tidak masuk counting utama.")
-
-
 def render_quality_section(summary: dict) -> None:
     with st.expander("Cara angka ini dihasilkan"):
         quality_rows = [

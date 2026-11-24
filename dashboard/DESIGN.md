@@ -62,6 +62,16 @@ keluarga kendaraan (mobil/motor) serta status tidak standar. Galeri event memaka
 full-frame pada `event_clips/` tetap boleh disimpan sebagai konteks audit, tetapi bukan tampilan
 utama galeri untuk end user.
 
+Pemutar overlay dan galeri crop menyediakan toggle **Mask tampil / Mask disembunyikan**, dengan mask
+aktif sebagai pilihan awal. Keduanya memilih pasangan artefak dari satu hasil inferensi; toggle tidak
+mengubah prediksi, counting, atau metrik model. Jalur tanpa mask mempertahankan bbox merah, label
+ID/confidence, dan garis hitung.
+Galeri memakai crop asli untuk mode tanpa mask dan crop SAM2 berwarna untuk mode mask. Pasangan
+video/crop dibangun setelah NB06 selesai, tanpa mengulang detector dan tracker. Pasangan tampilan
+dapat dibangun ulang melalui `builders/build_nb06_display_variants.py` jika manifest deteksi, sumber
+video, dan model SAM2 masih tersedia. Counting aktif saat ini berasal dari proses offline NB06; MQTT
+belum menjadi jalur ingestion atau transport data dashboard.
+
 YOLO dan CNN memakai lima kelas yang sama. `PantulanCahaya` ikut dilatih, tetapi disaring sebelum
 ByteTrack serta tidak masuk overlay event, galeri event, atau hitungan kendaraan. Overlay end user
 menampilkan mask SAM2 dan bbox `TidakStandar` merah serta garis hitung kuning.

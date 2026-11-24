@@ -1,0 +1,179 @@
+{
+  "model_type": "resnet18_sam2_emeans_fusion_5class",
+  "numeric_feature_version": "sam2-masked-hsv-shape-v2-empty-zero",
+  "numeric_feature_size": 77,
+  "numeric_feature_parts": {
+    "bbox_photometry": 35,
+    "sam2_foreground_photometry": 35,
+    "mask_geometry": 7
+  },
+  "augmentation": "horizontal flip with mask-centroid x mirrored consistently; ColorJitter on RGB branch",
+  "e_means": {
+    "algorithm": "Meta FAIR e-means (official PyTorch implementation)",
+    "implementation_tag": "faiss-v1.16.0",
+    "assignment_backend": "native-pytorch",
+    "n_train": 12795,
+    "feature_dimension": 77,
+    "n_clusters": 4,
+    "epochs": 5.0,
+    "seed": 20261116,
+    "recipe": {
+      "name": "canonical_v1",
+      "batch_law": "throughput",
+      "batch_law_requested": "auto",
+      "batch_law_reason": "d > 16",
+      "batch_size": 512,
+      "batch_size_requested": null,
+      "alpha0": 1.0,
+      "alpha0_source": "step_law",
+      "nepochs": 5,
+      "steps_per_pass": 25,
+      "total_steps": 125,
+      "epoch_rows": [
+        12795,
+        12795,
+        12795,
+        12795,
+        12795
+      ],
+      "epoch_steps": [
+        25,
+        25,
+        25,
+        25,
+        25
+      ],
+      "tail_policy": "keep",
+      "alpha_min_factor": 0.1,
+      "check_unused_every": 5,
+      "unused_threshold": 0.1,
+      "split_epsilon": 0.0001,
+      "init_usage": 1.52587890625e-05,
+      "seed": 20261116,
+      "backend": "torch",
+      "assignment_chunk_size": 8192,
+      "assignment_backend": "native",
+      "assignment_backend_requested": "native",
+      "device": "cpu",
+      "centroid_chunk_size": 4096,
+      "representation": "float32"
+    },
+    "training_objective_by_epoch": [
+      769520.8566102982,
+      745048.1459684372,
+      744315.653992176,
+      742460.3525753021,
+      741625.8008155823
+    ],
+    "train_cluster_counts": {
+      "0": 3031,
+      "1": 2430,
+      "2": 6088,
+      "3": 1246
+    },
+    "fit_split": "train_only",
+    "selection_method": "BIC comparison: linear objective vs interior segmented-linear elbow",
+    "candidate_k": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "selected_k": 4,
+    "selection_restarts_per_k": 3,
+    "selection_curve_csv": "output/attribute_classifier/emeans_k_selection.csv",
+    "mask_quality": {
+      "unique_masks": 16979,
+      "empty_masks": 0,
+      "empty_mask_fraction": 0.0,
+      "maximum_allowed_fraction": 0.01,
+      "empty_mask_photometry_policy": "zero vector; mask-validity feature is 0"
+    }
+  },
+  "mask_source_signature": "bc7a4a894e9f3e16fbf8d1de824d822888ad32456dbd0d4325bdd83e33947a8d",
+  "input_size": [
+    224,
+    224
+  ],
+  "crop_resize": "preserve_aspect_ratio_longest_side_then_mean_padding",
+  "pixel_normalization": {
+    "to_tensor_range": [
+      0.0,
+      1.0
+    ],
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "pretrained_source": "ImageNet",
+  "attribute_names": [
+    "MobilStandar",
+    "MobilTidakStandar",
+    "MotorStandar",
+    "MotorTidakStandar",
+    "PantulanCahaya"
+  ],
+  "train_examples": 12795,
+  "val_examples": 1202,
+  "test_examples": 2982,
+  "class_counts_train": {
+    "MobilStandar": 135,
+    "MobilTidakStandar": 2314,
+    "MotorStandar": 289,
+    "MotorTidakStandar": 5685,
+    "PantulanCahaya": 4372
+  },
+  "class_counts_val": {
+    "MobilStandar": 209,
+    "MobilTidakStandar": 168,
+    "MotorStandar": 257,
+    "MotorTidakStandar": 401,
+    "PantulanCahaya": 167
+  },
+  "loss": "weighted CrossEntropyLoss",
+  "best_val_loss": 1.469513798315394,
+  "test_metrics": {
+    "loss": 5.539167649469305,
+    "brier_mse": 0.08953619003295898,
+    "brier_rmse": 0.29922598600387573,
+    "accuracy": 0.6727029085159302,
+    "precision_macro": 0.6289340516433002,
+    "recall_macro": 0.6167335962149092,
+    "f1_macro": 0.6038227107954548,
+    "precision_MobilStandar": 0.5,
+    "precision_MobilTidakStandar": 0.635,
+    "precision_MotorStandar": 0.5372050816696915,
+    "precision_MotorTidakStandar": 0.7222222222222222,
+    "precision_PantulanCahaya": 0.750242954324587,
+    "recall_MobilStandar": 0.2109704641350211,
+    "recall_MobilTidakStandar": 0.8211206896551724,
+    "recall_MotorStandar": 0.5838264299802761,
+    "recall_MotorTidakStandar": 0.5365079365079365,
+    "recall_PantulanCahaya": 0.9312424607961399,
+    "support_MobilStandar": 237,
+    "support_MobilTidakStandar": 464,
+    "support_MotorStandar": 507,
+    "support_MotorTidakStandar": 945,
+    "support_PantulanCahaya": 829,
+    "support": 2982
+  },
+  "decision_rule": "softmax_argmax",
+  "feature_scaler_fit": "train_only",
+  "e_means_fit": "train_only",
+  "history_path": "D:\\Jere\\NewStyle\\output\\attribute_classifier\\training_history.csv",
+  "test_evaluation_enabled": true
+}

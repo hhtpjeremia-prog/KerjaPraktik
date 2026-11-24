@@ -17,10 +17,13 @@ try {
     & $python (Join-Path $projectRoot "builders\verify_dashboard_states.py") 2>&1
     $dashboardExitCode = $LASTEXITCODE
     if ($dashboardExitCode -ne 0) { throw "verify_dashboard_states.py gagal dengan exit code $dashboardExitCode" }
+    & $python (Join-Path $projectRoot "builders\notebook_gate.py") --check-all 2>&1
+    $notebookExitCode = $LASTEXITCODE
+    if ($notebookExitCode -ne 0) { throw "notebook builder/source gate gagal dengan exit code $notebookExitCode" }
 }
 finally {
     $ErrorActionPreference = $previousErrorActionPreference
     Pop-Location
 }
 
-Write-Host "Semua pemeriksaan pipeline dan dashboard lolos." -ForegroundColor Green
+Write-Host "Semua pemeriksaan logic, dashboard, dan sinkronisasi notebook lolos." -ForegroundColor Green

@@ -1,0 +1,4 @@
+split,images,boxes,MobilStandar,MobilTidakStandar,MotorStandar,MotorTidakStandar,PantulanCahaya
+train,826,12795,135,2314,289,5685,4372
+val,79,1202,209,168,257,401,167
+test,0,0,0,0,0,0,0

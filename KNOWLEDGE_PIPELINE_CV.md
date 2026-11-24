@@ -1,11 +1,11 @@
 # Pengetahuan Pipeline CV — Hasil Ekstraksi `Computer-Vision/`
 
-> **Status aktif (16 November 2026):** lima kelas seragam di anotasi/FM/YOLO/CNN; hanya fine-tune base. Continued dibatalkan. NB02e menghasilkan mask SAM2 untuk fitur CNN dan NB06. NB04b menggabungkan RGB, 77 fitur bbox+mask, serta one-hot e-means; scaler dan centroid fit hanya pada train. Pseudo-label hanya tambahan train, bukan gold validation/test. Fitur HSV/luminance adalah proksi, bukan fotometri terkalibrasi; e-means fitur eksperimental tanpa jaminan peningkatan akurasi.
+> **Status aktif (18 November 2026):** lima kelas seragam di anotasi/FM/YOLO/CNN; hanya fine-tune base. Continued dibatalkan. NB02e menghasilkan mask SAM2 untuk fitur CNN dan NB06. NB04b menggabungkan RGB, 77 fitur bbox+mask, serta one-hot e-means; scaler dan centroid fit hanya pada train. Pseudo-label hanya tambahan train, bukan gold validation/test. NB06 memiliki checkpoint atomik per video; checkpoint tidak menyimpan state tracker per frame. Varian overlay dan crop dengan/tanpa mask adalah artefak presentasi, bukan inferensi terpisah. Toggle dashboard tidak mengubah prediksi atau hitungan. MQTT belum diterapkan. Fitur HSV/luminance adalah proksi, bukan fotometri terkalibrasi; e-means fitur eksperimental tanpa jaminan peningkatan akurasi.
 
 
 > Sumber: `C:\Users\Jeremmy\LocalProjects\Python_Things\Computer-Vision`
 > Diekstrak: 2026-10-26 · 103 notebook, 14.838 baris kode setelah output/plot dibuang.
-> Skrip ekstraksi ulang: `builders/extract_cv_knowledge.py`.
+> Skrip ekstraksi historis: `archive/one-off-scripts/extract_cv_knowledge.py` (tidak termasuk pipeline aktif).
 > Dokumen ini **bukan** rangkuman kursus. Isinya hanya yang mengubah keputusan di pipeline ini.
 
 ---

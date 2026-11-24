@@ -1,0 +1,3 @@
+camera_id,frames,jumlah_bbox_mobil_standar,jumlah_bbox_mobil_tidak_standar,jumlah_bbox_motor_standar,jumlah_bbox_motor_tidak_standar,jumlah_bbox_pantulan_cahaya
+bogor-kab-bappenda2,78,0,191,8,391,181
+bogor-kab-pdam2,84,2,342,1,334,106

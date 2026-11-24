@@ -1,0 +1,1914 @@
+[
+  {
+    "camera_id": "bogor-kab-bappenda1",
+    "video_stem": "atcs_bogor-kab-bappenda1_20261002_185759",
+    "frame_index": 0,
+    "overlay_frame_index": 0,
+    "timestamp_seconds": 0.0,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 19,
+      "MobilTidakStandar": 2
+    },
+    "emeans_cluster_counts": {
+      "0": 2,
+      "1": 2,
+      "2": 16,
+      "3": 1
+    },
+    "detections": [
+      {
+        "track_id": 1,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9341,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 2,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.963,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 3,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5263,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 4,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9946,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 5,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8733,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 6,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7055,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 7,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.52,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 8,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9318,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 9,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5515,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 10,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5168,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 11,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6602,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 12,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5172,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 13,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9633,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 14,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6468,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 15,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8655,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 16,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9382,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 17,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9721,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 18,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7304,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 19,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8627,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 20,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6213,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 21,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9799,
+        "emeans_cluster_id": 2
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-bappenda1",
+    "video_stem": "atcs_bogor-kab-bappenda1_20261002_185759",
+    "frame_index": 526,
+    "overlay_frame_index": 526,
+    "timestamp_seconds": 21.041,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 15,
+      "PantulanCahaya": 3,
+      "MobilTidakStandar": 2
+    },
+    "emeans_cluster_counts": {
+      "0": 4,
+      "1": 2,
+      "2": 14
+    },
+    "detections": [
+      {
+        "track_id": 1,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9341,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 2,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.963,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 3,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5263,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 4,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9946,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 6,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7055,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 7,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.52,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 8,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9318,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 12,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5172,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 13,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9633,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 15,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8655,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 1986,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9781,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 2554,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.4843,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 2565,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7639,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 2849,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.3771,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 2930,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5167,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 2993,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.927,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 2994,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5026,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 3013,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7919,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 3094,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.4582,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 3100,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.493,
+        "emeans_cluster_id": 2
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-bappenda2",
+    "video_stem": "atcs_bogor-kab-bappenda2_20261002_190817",
+    "frame_index": 3733,
+    "overlay_frame_index": 3733,
+    "timestamp_seconds": 149.324,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 14,
+      "MotorStandar": 6,
+      "MobilTidakStandar": 3,
+      "PantulanCahaya": 3
+    },
+    "emeans_cluster_counts": {
+      "0": 3,
+      "1": 8,
+      "2": 15
+    },
+    "detections": [
+      {
+        "track_id": 7293,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.7745,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 7815,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7832,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 7942,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.3004,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 9208,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.6207,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 9356,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.794,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 9606,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.7879,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 9690,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.4346,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 10588,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.4041,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 8471,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.3726,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 11369,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6607,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 11678,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.531,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 11994,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.433,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 12007,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8953,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 13731,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6518,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 14249,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6332,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 14341,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.553,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 14551,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7729,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 14226,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.6911,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 14674,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7366,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 10333,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6853,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 14797,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.5931,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 15010,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.412,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 14976,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5943,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 15209,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.7379,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 15248,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.628,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 10328,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.6268,
+        "emeans_cluster_id": 1
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-bappenda2",
+    "video_stem": "atcs_bogor-kab-bappenda2_20261002_190817",
+    "frame_index": 11959,
+    "overlay_frame_index": 11959,
+    "timestamp_seconds": 478.373,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 14,
+      "MobilTidakStandar": 5,
+      "MotorStandar": 4,
+      "PantulanCahaya": 2
+    },
+    "emeans_cluster_counts": {
+      "0": 5,
+      "1": 2,
+      "2": 18
+    },
+    "detections": [
+      {
+        "track_id": 49263,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5086,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 50035,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9183,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 50121,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5635,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 49118,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.7428,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 52860,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.6051,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 55463,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9473,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 48942,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.5676,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 55725,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7906,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 53272,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9027,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 55461,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.793,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 58989,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.5056,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 50391,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.4009,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 49863,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6253,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59323,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.575,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59302,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.4928,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 57904,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9689,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59324,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8585,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 53512,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9043,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 59679,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8878,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59583,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5595,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59482,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.625,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59712,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.7147,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 59660,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7656,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59817,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5937,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 58086,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6579,
+        "emeans_cluster_id": 2
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-bappenda3",
+    "video_stem": "atcs_bogor-kab-bappenda3_20261002_191842",
+    "frame_index": 0,
+    "overlay_frame_index": 0,
+    "timestamp_seconds": 0.0,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 22,
+      "MobilTidakStandar": 8,
+      "MotorStandar": 4,
+      "PantulanCahaya": 2,
+      "MobilStandar": 1
+    },
+    "emeans_cluster_counts": {
+      "0": 12,
+      "2": 25
+    },
+    "detections": [
+      {
+        "track_id": 1,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8963,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 2,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.7658,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 3,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.7647,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 4,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7975,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 5,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7306,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 6,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5857,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 7,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8397,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 8,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8579,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 9,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.7365,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 10,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6157,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 11,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.859,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 12,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.5873,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 13,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7965,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 14,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7503,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 15,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.726,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 16,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7564,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 17,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8582,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 18,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.4977,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 19,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6555,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 20,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6813,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 21,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9416,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 22,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.3122,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 23,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9038,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 24,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6982,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 25,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.4574,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 26,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9133,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 27,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.96,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 28,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7837,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 29,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.4687,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 30,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7725,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 31,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9512,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 32,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.906,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 33,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.7395,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 34,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9197,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 35,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5165,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 36,
+        "class_name": "MobilStandar",
+        "classifier_confidence": 0.6537,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 37,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8717,
+        "emeans_cluster_id": 2
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-bappenda3",
+    "video_stem": "atcs_bogor-kab-bappenda3_20261002_191842",
+    "frame_index": 13021,
+    "overlay_frame_index": 13021,
+    "timestamp_seconds": 520.853,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 23,
+      "MobilTidakStandar": 7,
+      "MotorStandar": 3,
+      "MobilStandar": 1,
+      "PantulanCahaya": 1
+    },
+    "emeans_cluster_counts": {
+      "0": 4,
+      "1": 2,
+      "2": 27,
+      "3": 2
+    },
+    "detections": [
+      {
+        "track_id": 47593,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8893,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 47787,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9438,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 47941,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.598,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 50654,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.6401,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 50679,
+        "class_name": "MobilStandar",
+        "classifier_confidence": 0.3823,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 50801,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.968,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 52313,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8134,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 52558,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8515,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 52089,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5976,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 47837,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9713,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 53257,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5179,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 53288,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.7023,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 47961,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9649,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 58119,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7295,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 57960,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.4948,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59867,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9335,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 59515,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.4218,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 61598,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8984,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 61938,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.874,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 62595,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7857,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 61094,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8957,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 54161,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5696,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 65015,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.6258,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 65519,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6855,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 66019,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9563,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 66707,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8577,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 64726,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5569,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67327,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9046,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67329,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7905,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67342,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7172,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 66625,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.6139,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 64516,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.5333,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67481,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.357,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 67499,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7379,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67501,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7477,
+        "emeans_cluster_id": 2
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-pdam2",
+    "video_stem": "atcs_bogor-kab-pdam2_20261002_192854",
+    "frame_index": 11752,
+    "overlay_frame_index": 11752,
+    "timestamp_seconds": 471.652,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 11,
+      "PantulanCahaya": 9,
+      "MotorStandar": 5,
+      "MobilTidakStandar": 5
+    },
+    "emeans_cluster_counts": {
+      "0": 13,
+      "2": 4,
+      "3": 13
+    },
+    "detections": [
+      {
+        "track_id": 53028,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8347,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 53341,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.7154,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 57316,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 1.0,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 60321,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.708,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 60206,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 1.0,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 60764,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.4624,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 60948,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9058,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 60956,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8308,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 62463,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6723,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 55891,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5009,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 62858,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.3301,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 65313,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.4654,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 61108,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.437,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 64053,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9646,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 67846,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.824,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 68928,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9923,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 68817,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.6311,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 69765,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5903,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67588,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5033,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 70390,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9899,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 70528,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6459,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 64572,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6997,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 56012,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.5034,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 71356,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9922,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 71708,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.4796,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 71823,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9913,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 71880,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7034,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 72451,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7266,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 72510,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7966,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 71563,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9495,
+        "emeans_cluster_id": 3
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-pdam2",
+    "video_stem": "atcs_bogor-kab-pdam2_20261002_192854",
+    "frame_index": 0,
+    "overlay_frame_index": 0,
+    "timestamp_seconds": 0.0,
+    "cnn_class_counts": {
+      "MotorTidakStandar": 15,
+      "MobilTidakStandar": 12,
+      "PantulanCahaya": 3
+    },
+    "emeans_cluster_counts": {
+      "0": 15,
+      "2": 4,
+      "3": 11
+    },
+    "detections": [
+      {
+        "track_id": 1,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7933,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 2,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9734,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 3,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5827,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 4,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7722,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 5,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8719,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 6,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.419,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 7,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.3382,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 8,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8293,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 9,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.8321,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 10,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8998,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 11,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8106,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 12,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9134,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 13,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.9213,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 14,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9807,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 15,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8733,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 16,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9149,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 17,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9083,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 18,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5369,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 19,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5054,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 20,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8539,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 21,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 1.0,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 22,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8931,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 23,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.9593,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 24,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6519,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 25,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8763,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 26,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8524,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 27,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8817,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 28,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8695,
+        "emeans_cluster_id": 3
+      },
+      {
+        "track_id": 29,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8108,
+        "emeans_cluster_id": 0
+      },
+      {
+        "track_id": 30,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.6474,
+        "emeans_cluster_id": 0
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-pemda2",
+    "video_stem": "atcs_bogor-kab-pemda2_20261002_193906",
+    "frame_index": 6901,
+    "overlay_frame_index": 6901,
+    "timestamp_seconds": 276.042,
+    "cnn_class_counts": {
+      "PantulanCahaya": 14,
+      "MotorTidakStandar": 13,
+      "MobilTidakStandar": 4
+    },
+    "emeans_cluster_counts": {
+      "1": 4,
+      "2": 27
+    },
+    "detections": [
+      {
+        "track_id": 68399,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5868,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 73007,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.469,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67307,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.4421,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 74679,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.4924,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 75840,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7123,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 77370,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.7403,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 77745,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5816,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 76455,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8413,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 78265,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.7299,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 77257,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5382,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 78706,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9083,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 78856,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.8578,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 79163,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8315,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 78964,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7522,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 79374,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.534,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 79611,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.639,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 71666,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.625,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 78324,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.8674,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 79840,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7713,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 79627,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5572,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 79931,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9676,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 80055,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5113,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 80185,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6533,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 66045,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5285,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 80200,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.8829,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 80272,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5358,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 80111,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9991,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 80345,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5894,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 79851,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.536,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 80145,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6344,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 80323,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5545,
+        "emeans_cluster_id": 2
+      }
+    ]
+  },
+  {
+    "camera_id": "bogor-kab-pemda2",
+    "video_stem": "atcs_bogor-kab-pemda2_20261002_193906",
+    "frame_index": 6462,
+    "overlay_frame_index": 6462,
+    "timestamp_seconds": 258.482,
+    "cnn_class_counts": {
+      "PantulanCahaya": 16,
+      "MotorTidakStandar": 11,
+      "MotorStandar": 2,
+      "MobilTidakStandar": 2
+    },
+    "emeans_cluster_counts": {
+      "1": 3,
+      "2": 28
+    },
+    "detections": [
+      {
+        "track_id": 69701,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5029,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 68399,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5868,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 71141,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.5691,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 70815,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.7522,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 71765,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7422,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 71354,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9654,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 71828,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5107,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 72715,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5514,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 66045,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.5285,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 69998,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9938,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 72014,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7543,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73007,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.469,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73115,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7537,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73149,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.6412,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 72893,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9533,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73461,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.8774,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 71128,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7926,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73068,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9666,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 72888,
+        "class_name": "MotorStandar",
+        "classifier_confidence": 0.6719,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73490,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5372,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 72631,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7616,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73768,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.8081,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73417,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9653,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73855,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.7872,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73707,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.5252,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73529,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9899,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73784,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.5976,
+        "emeans_cluster_id": 1
+      },
+      {
+        "track_id": 73491,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.9761,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 73962,
+        "class_name": "MotorTidakStandar",
+        "classifier_confidence": 0.8038,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 71666,
+        "class_name": "MobilTidakStandar",
+        "classifier_confidence": 0.625,
+        "emeans_cluster_id": 2
+      },
+      {
+        "track_id": 67307,
+        "class_name": "PantulanCahaya",
+        "classifier_confidence": 0.4421,
+        "emeans_cluster_id": 2
+      }
+    ]
+  }
+]

@@ -31,8 +31,6 @@ MAX_CROP_SIDE = 640
 DEDUP_HASH_IMAGE_SIZE = (9, 8)
 DUPLICATE_WINDOW_FRAMES = 1
 DUPLICATE_HASH_DISTANCE = 4
-MOBIL_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Mobil")]
-MOTOR_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if class_name.startswith("Motor")]
 COUNT_CONTRACT = {
     "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis": ["MobilTidakStandar"],
     "jumlah_kendaraan_motor_tidak_standar_melintasi_garis": ["MotorTidakStandar"],
@@ -183,6 +181,55 @@ def difference_hash(gray_image, hash_image_size: tuple[int, int] = DEDUP_HASH_IM
     return sum(1 << index for index, bit in enumerate(differences.reshape(-1)) if bit)
 
 
+def allocate_sample_quota(camera_counts: dict[str, int], total_frames: int) -> dict[str, int]:
+    """Allocate an integer sampling target proportionally across cameras."""
+    if total_frames < 0 or any(count < 0 for count in camera_counts.values()):
+        raise ValueError("jumlah frame dan kandidat kamera tidak boleh negatif")
+    eligible_total = sum(camera_counts.values())
+    if eligible_total == 0:
+        return {camera_id: 0 for camera_id in camera_counts}
+    target_total = min(total_frames, eligible_total)
+    quotas = {
+        camera_id: target_total * camera_count // eligible_total
+        for camera_id, camera_count in camera_counts.items()
+    }
+    remainder = target_total - sum(quotas.values())
+    fractional_order = sorted(
+        camera_counts,
+        key=lambda camera_id: (-(camera_counts[camera_id] % eligible_total), camera_id),
+    )
+    for camera_id in fractional_order[:remainder]:
+        quotas[camera_id] += 1
+    return quotas
+
+
+def allocate_protected_sample_quota(
+    candidate_counts: dict[str, int],
+    protected_counts: dict[str, int],
+    total_frames: int,
+) -> dict[str, int]:
+    """Keep every protected frame, distributing the remaining budget proportionally."""
+    cameras = set(candidate_counts) | set(protected_counts)
+    candidates = {camera: int(candidate_counts.get(camera, 0)) for camera in cameras}
+    protected = {camera: int(protected_counts.get(camera, 0)) for camera in cameras}
+    if any(value < 0 for value in [*candidates.values(), *protected.values()]):
+        raise ValueError("jumlah kandidat dan frame terlindungi tidak boleh negatif")
+    if any(protected[camera] > candidates[camera] for camera in cameras):
+        raise ValueError("jumlah frame terlindungi melebihi kandidat kamera")
+    target = min(total_frames, sum(candidates.values()))
+    protected_total = sum(protected.values())
+    if protected_total > target:
+        raise ValueError(
+            f"frame terlindungi {protected_total} melebihi target sampling efektif {target}"
+        )
+    remaining_counts = {
+        camera: candidates[camera] - protected[camera]
+        for camera in cameras
+    }
+    extra_quotas = allocate_sample_quota(remaining_counts, target - protected_total)
+    return {camera: protected[camera] + extra_quotas[camera] for camera in cameras}
+
+
 def near_duplicate_flags(
     frame_hashes: list[int], *, window_frames: int = 1, distance_threshold: int = 4, missing_hash: int = -1
 ) -> list[bool]:
@@ -263,6 +310,115 @@ def detect_center_line_crossing(
             }
         stable_side = side
     return None
+
+
+def qualify_by_class_threshold(detection_frame: pd.DataFrame, thresholds: dict[str, float]) -> pd.DataFrame:
+    """Filter deteksi dengan confidence minimum yang dipilih untuk kelas masing-masing."""
+    if detection_frame.empty:
+        return detection_frame.copy()
+    threshold_series = detection_frame["class_name"].map(thresholds)
+    return detection_frame[detection_frame["score"] >= threshold_series].copy()
+
+
+def resolve_track_class(track_frame: pd.DataFrame) -> tuple[str, float]:
+    """Pilih kelas mayoritas per track, lalu pecahkan seri dengan rerata confidence."""
+    class_stats = track_frame.groupby("class_name")["score"].agg(["count", "mean"])
+    class_stats = class_stats.sort_values(["count", "mean"], ascending=[False, False])
+    return str(class_stats.index[0]), float(class_stats.iloc[0]["mean"])
+
+
+UNIT_SUMMARY_COLUMNS = [
+    "video_stem", "unit_id", "camera_id", "class_name", "hits",
+    "first_frame", "last_frame", "mean_score",
+    "first_x1", "first_y1", "first_x2", "first_y2",
+    "last_x1", "last_y1", "last_x2", "last_y2",
+]
+
+
+def summarise_units(detection_frame: pd.DataFrame, grouping_column: str) -> pd.DataFrame:
+    """Ringkas observasi per unit ID ke kelas, durasi, confidence, dan bbox awal/akhir."""
+    if detection_frame.empty:
+        return pd.DataFrame(columns=UNIT_SUMMARY_COLUMNS)
+    unit_rows = []
+    for (video_stem, unit_id), unit_frame in detection_frame.groupby(["video_stem", grouping_column], sort=True):
+        ordered_frame = unit_frame.sort_values("frame_index")
+        first_row = ordered_frame.iloc[0]
+        last_row = ordered_frame.iloc[-1]
+        resolved_class, mean_score = resolve_track_class(ordered_frame)
+        unit_rows.append({
+            "video_stem": video_stem,
+            "unit_id": int(unit_id),
+            "camera_id": first_row["camera_id"],
+            "class_name": resolved_class,
+            "hits": int(len(ordered_frame)),
+            "first_frame": int(first_row["frame_index"]),
+            "last_frame": int(last_row["frame_index"]),
+            "mean_score": round(mean_score, 4),
+            "first_x1": float(first_row["frame_x1"]),
+            "first_y1": float(first_row["frame_y1"]),
+            "first_x2": float(first_row["frame_x2"]),
+            "first_y2": float(first_row["frame_y2"]),
+            "last_x1": float(last_row["frame_x1"]),
+            "last_y1": float(last_row["frame_y1"]),
+            "last_x2": float(last_row["frame_x2"]),
+            "last_y2": float(last_row["frame_y2"]),
+        })
+    return pd.DataFrame(unit_rows, columns=UNIT_SUMMARY_COLUMNS)
+
+
+def detect_line_crossings(
+    detection_frame: pd.DataFrame,
+    line_by_video: dict[str, dict],
+    *,
+    min_track_hits: int,
+    hysteresis_ratio: float,
+) -> pd.DataFrame:
+    """Keluarkan satu crossing per track kendaraan tidak standar yang benar-benar melintasi garis."""
+    crossing_columns = [
+        "video_stem", "camera_id", "vehicle_id", "track_id", "class_name", "score",
+        "mean_track_score", "crossing_frame", "crossing_direction", "line_y",
+        "frame_x1", "frame_y1", "frame_x2", "frame_y2",
+    ]
+    if detection_frame.empty:
+        return pd.DataFrame(columns=crossing_columns)
+    crossing_rows = []
+    event_classes = {"MobilTidakStandar", "MotorTidakStandar"}
+    for (video_stem, vehicle_id), unit_frame in detection_frame.groupby(["video_stem", "vehicle_id"], sort=True):
+        ordered = unit_frame.sort_values("frame_index")
+        if len(ordered) < min_track_hits:
+            continue
+        event_class, mean_score = resolve_track_class(ordered)
+        if event_class not in event_classes:
+            continue
+        job = line_by_video[video_stem]
+        crossing = detect_center_line_crossing(
+            ordered.to_dict(orient="records"),
+            line_y=float(job["count_line_y"]),
+            line_x1=float(job["count_line_x1"]),
+            line_x2=float(job["count_line_x2"]),
+            hysteresis=max(3.0, float(job["height"]) * hysteresis_ratio),
+            min_hits=min_track_hits,
+        )
+        if crossing is None:
+            continue
+        row = crossing["row"]
+        crossing_rows.append({
+            "video_stem": video_stem,
+            "camera_id": row["camera_id"],
+            "vehicle_id": int(vehicle_id),
+            "track_id": int(row["track_id"]),
+            "class_name": event_class,
+            "score": round(float(row["score"]), 4),
+            "mean_track_score": round(mean_score, 4),
+            "crossing_frame": int(row["frame_index"]),
+            "crossing_direction": crossing["crossing_direction"],
+            "line_y": int(job["count_line_y"]),
+            "frame_x1": float(row["frame_x1"]),
+            "frame_y1": float(row["frame_y1"]),
+            "frame_x2": float(row["frame_x2"]),
+            "frame_y2": float(row["frame_y2"]),
+        })
+    return pd.DataFrame(crossing_rows, columns=crossing_columns)
 
 
 def stitch_track_fragments(

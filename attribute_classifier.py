@@ -307,7 +307,6 @@ def load_classifier(
     )
 
 
-def decode_attributes(logits: np.ndarray, thresholds: dict[str, float] | None = None) -> dict[str, bool]:
-    del thresholds  # Multiclass output uses one argmax decision, not independent sigmoid cutoffs.
+def decode_attributes(logits: np.ndarray) -> dict[str, bool]:
     predicted_index = int(np.argmax(np.asarray(logits, dtype=np.float64)))
     return {name: index == predicted_index for index, name in enumerate(ATTRIBUTE_NAMES)}

@@ -733,8 +733,8 @@ def build_realtime_playback_html(
     padding: 8px;
   }}
   .crop-img-box img {{
-    max-width: 100%;
-    max-height: 254px;
+    width: 100%;
+    height: 240px;
     object-fit: contain;
     border-radius: 4px;
     image-rendering: auto;

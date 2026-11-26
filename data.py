@@ -59,6 +59,17 @@ CAMERA_STATUS_COUNTED = "dihitung"
 CAMERA_STATUS_NO_VIDEO = "tidak ada video"
 CAMERA_STATUS_OUTSIDE = "di luar split hitung"
 
+CAMERA_DISPLAY_NAMES = {
+    "bogor-kab-bappenda1": "Bappenda 1",
+    "bogor-kab-bappenda2": "Bappenda 2",
+    "bogor-kab-bappenda3": "Bappenda 3",
+    "bogor-kab-pdam2": "PDAM 2",
+    "bogor-kab-pemda2": "Pemda 2",
+}
+
+ROLE_INDEPENDENT_TEST = "Lokasi Uji Independen"
+ROLE_REGULAR_MONITORING = "Lokasi Pantau Reguler"
+
 NOT_AVAILABLE_LABEL = "n/a"
 THOUSAND_SEPARATOR = "."
 THOUSAND_SUFFIXES = ((1_000_000.0, "M"), (1_000.0, "k"))
@@ -167,6 +178,77 @@ def format_count(value: int | float | str | None) -> str:
             scaled_value = f"{numeric_value / threshold:.{SUFFIX_DECIMAL_PLACES}f}"
             return trim_trailing_zeros(scaled_value) + suffix
     return f"{int(numeric_value):,}".replace(",", THOUSAND_SEPARATOR)
+
+
+def format_exact_count(value: int | float | str | None) -> str:
+    """Format angka eksak dengan pemisah ribuan titik (mis. 1.672) tanpa disingkat k/M."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return NOT_AVAILABLE_LABEL
+    numeric_value = float(value)
+    if math.isnan(numeric_value):
+        return NOT_AVAILABLE_LABEL
+    return f"{int(round(numeric_value)):,}".replace(",", THOUSAND_SEPARATOR)
+
+
+def camera_display_name(camera_id: str) -> str:
+    """Nama lokasi CCTV yang ramah pengguna umum."""
+    return CAMERA_DISPLAY_NAMES.get(camera_id, camera_id)
+
+
+def build_all_cameras_crossing_table(
+    timeline_frame: pd.DataFrame | None,
+    counted_splits: list[str],
+    overlay_manifest: list[dict] | None = None,
+) -> pd.DataFrame:
+    """Agregasi lengkap seluruh titik CCTV dari counting_timeline.csv beserta peran non-teknikal."""
+    counted_split_set = set(counted_splits or [])
+    manifest_videos_by_cam: dict[str, set[str]] = {}
+    if overlay_manifest:
+        for row in overlay_manifest:
+            cam = str(row.get(CAMERA_ID_COLUMN, "")).strip()
+            stem = str(row.get(VIDEO_STEM_COLUMN, "")).strip()
+            if cam and stem:
+                manifest_videos_by_cam.setdefault(cam, set()).add(stem)
+
+    rows = []
+    for camera_id, split_name in sorted(SPLIT_NAME_BY_CAMERA.items()):
+        is_test_loc = split_name in counted_split_set
+        if timeline_frame is not None and not timeline_frame.empty:
+            cam_tl = timeline_frame[timeline_frame[CAMERA_ID_COLUMN] == camera_id]
+        else:
+            cam_tl = pd.DataFrame()
+        mobil = int((cam_tl["class_name"] == "MobilTidakStandar").sum()) if not cam_tl.empty else 0
+        motor = int((cam_tl["class_name"] == "MotorTidakStandar").sum()) if not cam_tl.empty else 0
+        total = mobil + motor
+        if not cam_tl.empty and VIDEO_STEM_COLUMN in cam_tl.columns:
+            videos_count = int(cam_tl[VIDEO_STEM_COLUMN].nunique())
+        else:
+            videos_count = len(manifest_videos_by_cam.get(camera_id, set()))
+
+        if is_test_loc:
+            role_detail = "Lokasi Uji Independen — belum pernah dilihat sistem saat proses belajar"
+        elif split_name == "val":
+            role_detail = "Lokasi Penyelarasan — dipakai untuk menyempurnakan kepekaan deteksi"
+        else:
+            role_detail = "Lokasi Acuan Belajar — dipakai untuk melatih pengenalan lampu kendaraan"
+
+        rows.append(
+            {
+                CAMERA_ID_COLUMN: camera_id,
+                "display_name": camera_display_name(camera_id),
+                SPLIT_COLUMN: split_name,
+                "is_test_location": is_test_loc,
+                "role_label": ROLE_INDEPENDENT_TEST if is_test_loc else ROLE_REGULAR_MONITORING,
+                "role_detail": role_detail,
+                VIDEOS_COUNTED_COLUMN: videos_count,
+                CROSSINGS_COUNTED_COLUMN: total,
+                "mobil_crossings": mobil,
+                "motor_crossings": motor,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def trim_trailing_zeros(formatted_value: str) -> str:

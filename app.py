@@ -1,5 +1,6 @@
 """Dashboard Streamlit hasil hitung kendaraan per titik CCTV (siap deploy Streamlit Cloud & lokal)."""
 
+import base64
 import html
 import json
 import os
@@ -19,18 +20,24 @@ if str(APP_ROOT) not in sys.path:
 from data import (
     CLASS_NAMES,
     NOT_AVAILABLE_LABEL,
+    ROLE_INDEPENDENT_TEST,
     STATE_EMPTY,
     STATE_ERROR,
     STATE_PARTIAL,
     CountingSnapshot,
-    build_camera_status_table,
+    build_all_cameras_crossing_table,
+    camera_display_name,
     format_count,
+    format_exact_count,
     load_counting_snapshot,
     resolve_nb06_root,
 )
 from media_server import LocalVideoServer
 
-PAGE_TITLE = "Hasil Hitung Kendaraan — CCTV Kab. Bogor"
+PAGE_TITLE = "Pendeteksi Objek Lampu Kendaraan Tidak Standar — CCTV Kab. Bogor"
+
+SCOPE_ALL_LOCATIONS = "Semua Lokasi Pantau (5 Titik CCTV)"
+SCOPE_TEST_LOCATIONS = "Lokasi Uji Independen (2 Titik CCTV)"
 
 CLASS_LABELS = {
     "MobilStandar": "Mobil standar",
@@ -54,8 +61,8 @@ STYLE_BLOCK = """
   font-variant-numeric: tabular-nums;
 }
 [data-testid="stMetricLabel"] p {
-  font-size: 0.8rem;
-  letter-spacing: 0.02em;
+  font-size: 0.82rem;
+  letter-spacing: 0.01em;
 }
 </style>
 """
@@ -79,30 +86,63 @@ def main() -> None:
     st.set_page_config(page_title=PAGE_TITLE, layout="wide")
     st.markdown(STYLE_BLOCK, unsafe_allow_html=True)
     video_base_url = resolve_video_base_url()
-    st.sidebar.caption(f"Sumber artefak: `{resolve_nb06_root().name}`")
+    st.sidebar.caption("CCTV Kabupaten Bogor · 5 Lokasi Pantau")
     st.sidebar.caption(
-        "Mode video: Cloud Streaming (HTTPS)"
+        "Mode pemutaran video: Streaming Cloud (HTTPS)"
         if video_base_url
-        else "Mode video: Lokal (HTTP 206 Byte-Range)"
+        else "Mode pemutaran video: Lokal (HTTP 206)"
     )
     snapshot = load_cached_counting_snapshot()
     render_header(snapshot.summary)
     if not render_state_notice(snapshot):
         return
     render_smoke_notice(snapshot.summary)
-    render_totals(snapshot)
+
+    all_cameras_frame = build_all_cameras_crossing_table(
+        snapshot.timeline_frame,
+        snapshot.summary.get("counted_splits", []),
+        snapshot.overlay_manifest,
+    )
+
+    tab_overview, tab_locations = st.tabs(
+        ["Pemantauan Umum", "Lokasi Uji & Akurasi Sistem"]
+    )
+
+    with tab_overview:
+        selected_scope = st.radio(
+            "Cakupan lokasi pantau",
+            [SCOPE_ALL_LOCATIONS, SCOPE_TEST_LOCATIONS],
+            horizontal=True,
+            key="overview_scope",
+        )
+        only_test_locations = selected_scope == SCOPE_TEST_LOCATIONS
+        if only_test_locations:
+            st.caption(
+                "Menampilkan hasil khusus dari 2 lokasi uji independen (**Bappenda 2** dan **PDAM 2**) — "
+                "kamera yang tidak pernah dipakai saat sistem belajar, sehingga mencerminkan kinerja objektif di lapangan."
+            )
+        else:
+            st.caption(
+                "Menampilkan gabungan seluruh kendaraan terdeteksi di 5 lokasi CCTV Kabupaten Bogor. "
+                "Pilih **Lokasi Uji Independen** di atas untuk fokus pada 2 lokasi pengujian objektif."
+            )
+        render_totals(all_cameras_frame, only_test_locations=only_test_locations)
+        st.divider()
+        render_playback(snapshot, all_cameras_frame, only_test_locations=only_test_locations)
+        st.divider()
+        render_event_footage(snapshot, all_cameras_frame, only_test_locations=only_test_locations)
+        st.divider()
+        render_camera_section(all_cameras_frame, only_test_locations=only_test_locations)
+
+    with tab_locations:
+        render_test_locations_overview(all_cameras_frame)
+        st.divider()
+        render_model_validation(snapshot)
+        st.divider()
+        render_contract_section(snapshot.summary, snapshot.camera_table)
+        render_quality_section(snapshot.summary)
+
     st.divider()
-    render_playback(snapshot)
-    st.divider()
-    render_event_footage(snapshot)
-    st.divider()
-    render_model_validation(snapshot)
-    st.divider()
-    render_camera_section(snapshot)
-    st.divider()
-    render_contract_section(snapshot.summary)
-    st.divider()
-    render_quality_section(snapshot.summary)
     render_footer()
 
 
@@ -134,81 +174,60 @@ def load_cached_counting_snapshot() -> CountingSnapshot:
 
 
 def render_header(summary: dict | None) -> None:
+    del summary
     st.title(PAGE_TITLE)
-    unit_note = "Counting utama = kendaraan tidak standar yang melintasi counting line; setiap vehicle track dihitung sekali per video."
-    if summary is None:
-        st.caption(unit_note)
-        return
-    counted_splits = ", ".join(summary.get("counted_splits", []))
     st.caption(
-        f"{unit_note} Split dihitung: {counted_splits}. "
-        f"Filter minimal {format_count(summary.get('min_track_hits'))} kemunculan hanya berlaku "
-        "untuk menyaring track singkat dan audit temporal. Bbox-per-frame tersedia sebagai metrik pendamping."
+        "Pemantauan otomatis kendaraan bermotor berlampu tidak standar yang melintasi garis hitung "
+        "di 5 titik CCTV Kabupaten Bogor. Setiap kendaraan dihitung satu kali saat melintas."
     )
 
 
 def render_state_notice(snapshot: CountingSnapshot) -> bool:
     if snapshot.state == STATE_EMPTY:
         st.warning(
-            "Belum ada hasil model. Dashboard membaca `output/nb06/counting_summary.json` dan "
-            "`output/nb06/counting_by_video.csv`; keduanya belum ada."
-        )
-        st.markdown(
-            "Jalankan pipeline hingga tahap tracking dan counting selesai, lalu muat ulang halaman ini. "
-            "Urutan lengkap ada di `README.md`."
+            "Belum ada hasil pemantauan. Dashboard membutuhkan `counting_summary.json` dan "
+            "`counting_by_video.csv`; keduanya belum ditemukan."
         )
         return False
     if snapshot.state == STATE_PARTIAL:
         missing_list = ", ".join(f"`{name}`" for name in snapshot.missing_artifacts)
-        st.warning(f"Artefak NB06 belum lengkap — belum ada: {missing_list}. Jalankan ulang NB06.")
+        st.warning(f"Data pemantauan belum lengkap — berkas berikut belum ada: {missing_list}.")
         return False
     if snapshot.state == STATE_ERROR:
-        st.error(f"Artefak NB06 ada tetapi tidak bisa dibaca: {snapshot.error_message}")
+        st.error(f"Data pemantauan ada tetapi tidak dapat dibaca: {snapshot.error_message}")
         return False
     return True
 
 
 def render_smoke_notice(summary: dict) -> None:
     if summary.get("smoke_mode"):
-        st.info("Mode SMOKE: angka di halaman ini berasal dari data sintetis, bukan hasil riset.")
+        st.info("Mode simulasi: angka di halaman ini berasal dari data contoh, bukan rekaman asli.")
 
 
-def render_totals(snapshot: CountingSnapshot) -> None:
-    summary = snapshot.summary
-    counting_totals = summary["counting_totals"]
-    official_video_count = (
-        int(snapshot.per_video_frame["video_stem"].nunique())
-        if snapshot.per_video_frame is not None and not snapshot.per_video_frame.empty
-        else summary.get("videos_counted")
+def render_totals(all_cameras_frame: pd.DataFrame, *, only_test_locations: bool) -> None:
+    active_frame = (
+        all_cameras_frame[all_cameras_frame["is_test_location"]]
+        if only_test_locations
+        else all_cameras_frame
     )
+    total_crossings = int(active_frame["crossings_counted"].sum()) if not active_frame.empty else 0
+    mobil_crossings = int(active_frame["mobil_crossings"].sum()) if not active_frame.empty else 0
+    motor_crossings = int(active_frame["motor_crossings"].sum()) if not active_frame.empty else 0
+    locations_count = int(len(active_frame))
+
     total_columns = st.columns(4)
     total_columns[0].metric(
-        "Track tidak standar crossing", format_count(summary.get("line_crossings_counted")), border=True
+        "Total Kendaraan Tidak Standar", format_exact_count(total_crossings), border=True
     )
     total_columns[1].metric(
-        "Mobil tidak standar crossing",
-        format_count(counting_totals.get("jumlah_kendaraan_mobil_tidak_standar_melintasi_garis")),
-        border=True,
+        "Mobil Tidak Standar", format_exact_count(mobil_crossings), border=True
     )
     total_columns[2].metric(
-        "Motor tidak standar crossing",
-        format_count(counting_totals.get("jumlah_kendaraan_motor_tidak_standar_melintasi_garis")),
-        border=True,
+        "Motor Tidak Standar", format_exact_count(motor_crossings), border=True
     )
     total_columns[3].metric(
-        "Video diproses", format_count(official_video_count), border=True
+        "Titik CCTV Dipantau", format_exact_count(locations_count), border=True
     )
-    total_overlay_videos = len(snapshot.overlay_manifest) if snapshot.overlay_manifest else summary.get("videos_found")
-    if (
-        isinstance(official_video_count, int)
-        and isinstance(total_overlay_videos, int)
-        and total_overlay_videos > official_video_count
-    ):
-        st.caption(
-            f"Total crossing resmi berasal dari {official_video_count} video split test; "
-            f"{total_overlay_videos - official_video_count} video split train/val lainnya tetap tersedia "
-            "pada pemutar playback di bawah untuk inspeksi presentasi."
-        )
 
 
 def _resolve_project_path(raw_path: object) -> Path | None:
@@ -241,11 +260,40 @@ def _build_remote_video_url(base_url: str, relpath: object) -> str | None:
     return f"{base_url}/{encoded}"
 
 
-def _serialize_timeline_events(video_timeline: pd.DataFrame, fps: float) -> list[dict]:
+@st.cache_data(show_spinner=False)
+def _load_video_crop_data_uris(
+    nb06_root_str: str,
+    crop_entries: tuple[tuple[int, str, str], ...],
+) -> dict[int, dict[str, str]]:
+    """Muat foto crop (dengan & tanpa highlight) untuk satu video menjadi data URI ringan (~1 KB/foto)."""
+    del nb06_root_str
+    result: dict[int, dict[str, str]] = {}
+    for vehicle_id, mask_raw, plain_raw in crop_entries:
+        entry: dict[str, str] = {}
+        for key, raw_val in (("mask", mask_raw), ("raw", plain_raw)):
+            crop_path = _resolve_project_path(raw_val)
+            if crop_path is not None and crop_path.exists():
+                try:
+                    encoded = base64.b64encode(crop_path.read_bytes()).decode("ascii")
+                    mime = "image/png" if crop_path.suffix.lower() == ".png" else "image/jpeg"
+                    entry[key] = f"data:{mime};base64,{encoded}"
+                except OSError:
+                    continue
+        if entry:
+            result[vehicle_id] = entry
+    return result
+
+
+def _serialize_timeline_events(
+    video_timeline: pd.DataFrame,
+    fps: float,
+    crop_data_uris: dict[int, dict[str, str]] | None = None,
+) -> list[dict]:
     if video_timeline.empty:
         return []
     frame_column = "crossing_frame" if "crossing_frame" in video_timeline.columns else "frame_index"
     ordered = video_timeline.sort_values([frame_column, "vehicle_id"])
+    crop_lookup = crop_data_uris or {}
     events = []
     for _, row in ordered.iterrows():
         frame_index = int(row[frame_column])
@@ -254,8 +302,10 @@ def _serialize_timeline_events(video_timeline: pd.DataFrame, fps: float) -> list
         else:
             timestamp_seconds = frame_index / max(fps, 1e-6)
         class_name = str(row["class_name"])
+        vehicle_id = int(row["vehicle_id"]) if "vehicle_id" in row and pd.notna(row["vehicle_id"]) else 0
+        crops = crop_lookup.get(vehicle_id, {})
         events.append({
-            "vehicle_id": int(row["vehicle_id"]) if "vehicle_id" in row and pd.notna(row["vehicle_id"]) else 0,
+            "vehicle_id": vehicle_id,
             "track_id": int(row["track_id"]) if "track_id" in row and pd.notna(row["track_id"]) else 0,
             "class_name": class_name,
             "class_label": CLASS_LABELS.get(class_name, class_name),
@@ -263,6 +313,8 @@ def _serialize_timeline_events(video_timeline: pd.DataFrame, fps: float) -> list
             "ts": round(timestamp_seconds, 3),
             "direction": str(row.get("crossing_direction", "down")),
             "score": round(float(row.get("score", 0.0)) * 100.0, 1),
+            "cropMask": crops.get("mask", ""),
+            "cropRaw": crops.get("raw", ""),
         })
     return events
 
@@ -272,6 +324,7 @@ def build_realtime_playback_html(
     video_url_with_mask: str | None,
     video_url_without_mask: str | None,
     camera_id: str,
+    camera_label: str,
     video_stem: str,
     fps: float,
     duration_seconds: float,
@@ -281,18 +334,19 @@ def build_realtime_playback_html(
         "urlWithMask": video_url_with_mask or "",
         "urlWithoutMask": video_url_without_mask or "",
         "cameraId": camera_id,
+        "cameraLabel": camera_label,
         "videoStem": video_stem,
         "fps": fps,
         "duration": duration_seconds,
         "events": events,
     }
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-    safe_camera = html.escape(camera_id)
+    safe_camera = html.escape(camera_label)
     has_pair = bool(video_url_with_mask and video_url_without_mask)
     toggle_markup = (
-        '<div class="seg-toggle" role="group" aria-label="Tampilan segmentasi">'
-        '<button type="button" id="btnMaskOn" class="seg-btn active">Mask tampil</button>'
-        '<button type="button" id="btnMaskOff" class="seg-btn">Mask disembunyikan</button>'
+        '<div class="seg-toggle" role="group" aria-label="Tampilan highlight lampu">'
+        '<button type="button" id="btnMaskOn" class="seg-btn active">Dengan highlight</button>'
+        '<button type="button" id="btnMaskOff" class="seg-btn">Tanpa highlight</button>'
         "</div>"
         if has_pair
         else ""
@@ -568,6 +622,176 @@ def build_realtime_playback_html(
     color: var(--muted);
     margin-top: 8px;
   }}
+  .id-crop-btn {{
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid #BBD8C8;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 11.5px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: background-color 120ms ease, color 120ms ease;
+  }}
+  .id-crop-btn:hover {{
+    background: var(--accent);
+    color: #FFFFFF;
+    border-color: var(--accent);
+  }}
+  .banner-crop-btn {{
+    border: 1px solid var(--accent);
+    background: #FFFFFF;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }}
+  .banner-crop-btn:hover {{
+    background: var(--accent);
+    color: #FFFFFF;
+  }}
+  .crop-modal-backdrop {{
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 20, 0.56);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 50;
+  }}
+  .crop-modal-backdrop.open {{
+    display: flex;
+  }}
+  .crop-modal {{
+    background: #FFFFFF;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: min(560px, 100%);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+    overflow: hidden;
+  }}
+  .crop-modal-header {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }}
+  .crop-modal-title {{
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }}
+  .crop-modal-close {{
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }}
+  .crop-modal-close:hover {{
+    background: #E2E7E4;
+    color: var(--text);
+  }}
+  .crop-modal-body {{
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 16px;
+    padding: 16px;
+    align-items: start;
+  }}
+  @media (max-width: 540px) {{
+    .crop-modal-body {{ grid-template-columns: 1fr; }}
+  }}
+  .crop-img-box {{
+    background: #141715;
+    border-radius: 8px;
+    min-height: 220px;
+    max-height: 270px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: 8px;
+  }}
+  .crop-img-box img {{
+    max-width: 100%;
+    max-height: 254px;
+    object-fit: contain;
+    border-radius: 4px;
+    image-rendering: auto;
+  }}
+  .crop-img-empty {{
+    color: #CBD4CF;
+    font-size: 12px;
+    text-align: center;
+    padding: 16px;
+  }}
+  .crop-meta {{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12.5px;
+  }}
+  .crop-meta-row {{
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid #EEF2F0;
+    padding-bottom: 5px;
+  }}
+  .crop-meta-label {{
+    color: var(--muted);
+  }}
+  .crop-meta-val {{
+    color: var(--text);
+    font-weight: 600;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }}
+  .crop-modal-footer {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 16px 14px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }}
+  .modal-actions {{
+    display: flex;
+    gap: 8px;
+  }}
+  .modal-btn {{
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 11px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }}
+  .modal-btn.primary {{
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #FFFFFF;
+  }}
+  .modal-btn:hover {{
+    filter: brightness(0.96);
+  }}
 </style>
 </head>
 <body>
@@ -575,7 +799,7 @@ def build_realtime_playback_html(
   <div class="panel">
     <div class="toolbar">
       <div>
-        <div class="title-block">Pemutar overlay sinkron — {safe_camera}</div>
+        <div class="title-block">Pemutar CCTV sinkron — {safe_camera}</div>
         <div class="meta-line" id="videoClock">Detik 0.0 / {duration_seconds:.1f} · Frame 0</div>
       </div>
       <div class="controls-row">
@@ -590,20 +814,20 @@ def build_realtime_playback_html(
     </div>
     <video id="overlayVideo" controls playsinline preload="metadata" crossorigin="anonymous"></video>
     <div class="progress-wrap">
-      <span id="statusText">Siap diputar — angka counting akan bertambah otomatis saat kendaraan melewati garis kuning.</span>
-      <span id="eventTotalLabel">Total video: {len(events)} crossing</span>
+      <span id="statusText">Siap diputar — angka otomatis bertambah saat kendaraan melewati garis kuning.</span>
+      <span id="eventTotalLabel">Total video: {len(events)} kendaraan</span>
     </div>
     <div class="legend">
-      <span class="legend-item"><span class="swatch" style="background:#FF0000;"></span>BBox merah = lampu tidak standar</span>
+      <span class="legend-item"><span class="swatch" style="background:#FF0000;"></span>Kotak merah = lampu tidak standar</span>
       <span class="legend-item"><span class="swatch" style="background:#D4A100;"></span>Garis kuning = garis hitung virtual</span>
-      <span class="legend-item"><span class="swatch" style="background:transparent;border:1px solid #5A635E;"></span>Tanpa bbox = standar / tidak ditampilkan</span>
+      <span class="legend-item"><span class="swatch" style="background:transparent;border:1px solid #5A635E;"></span>Tanpa kotak = lampu standar</span>
     </div>
   </div>
 
   <div class="panel">
     <div class="metrics-grid">
       <div class="metric-card" id="cardTotal">
-        <div class="metric-label">Total crossing</div>
+        <div class="metric-label">Total melintas</div>
         <div class="metric-value" id="valTotal">0</div>
         <div class="metric-sub" id="subTotal">dari {len(events)}</div>
       </div>
@@ -621,7 +845,7 @@ def build_realtime_playback_html(
 
     <div class="status-strip">
       <span id="directionSummary">Arah: turun 0 · naik 0</span>
-      <span id="nextEventHint">Event berikutnya: —</span>
+      <span id="nextEventHint">Berikutnya: —</span>
     </div>
 
     <div class="live-banner" id="liveBanner">
@@ -632,7 +856,7 @@ def build_realtime_playback_html(
       <span class="feed-title">Log pelintasan garis</span>
       <div class="feed-tabs">
         <button type="button" id="tabPassed" class="feed-tab active">Sudah lewat</button>
-        <button type="button" id="tabAll" class="feed-tab">Semua event</button>
+        <button type="button" id="tabAll" class="feed-tab">Semua</button>
       </div>
     </div>
 
@@ -642,15 +866,48 @@ def build_realtime_playback_html(
           <tr>
             <th>#</th>
             <th>Detik</th>
-            <th>ID</th>
-            <th>Kelas</th>
-            <th>Conf</th>
+            <th>ID (Foto)</th>
+            <th>Kategori</th>
+            <th>Yakin</th>
           </tr>
         </thead>
         <tbody id="feedBody"></tbody>
       </table>
     </div>
-    <div class="jump-hint">Klik baris mana saja pada log untuk melompatkan video langsung ke momen kendaraan melewati garis.</div>
+    <div class="jump-hint">Klik <strong>ID kendaraan</strong> untuk menjeda video dan langsung melihat foto crop. Klik kolom lain untuk melompat ke detik melintas.</div>
+  </div>
+</div>
+
+<div class="crop-modal-backdrop" id="cropModalBackdrop" role="dialog" aria-modal="true" aria-labelledby="cropModalTitle">
+  <div class="crop-modal">
+    <div class="crop-modal-header">
+      <span class="crop-modal-title" id="cropModalTitle">Foto Kendaraan</span>
+      <button type="button" class="crop-modal-close" id="cropModalClose" aria-label="Tutup">&times;</button>
+    </div>
+    <div class="crop-modal-body">
+      <div class="crop-img-box" id="cropImgBox">
+        <img id="cropModalImg" alt="Foto crop kendaraan" />
+        <div class="crop-img-empty" id="cropImgEmpty" style="display:none;">Foto crop tidak tersedia untuk kendaraan ini.</div>
+      </div>
+      <div class="crop-meta">
+        <div class="crop-meta-row"><span class="crop-meta-label">ID Kendaraan</span><span class="crop-meta-val" id="metaVehicleId">—</span></div>
+        <div class="crop-meta-row"><span class="crop-meta-label">Kategori</span><span class="crop-meta-val" id="metaClass">—</span></div>
+        <div class="crop-meta-row"><span class="crop-meta-label">Lokasi CCTV</span><span class="crop-meta-val" id="metaCamera">{safe_camera}</span></div>
+        <div class="crop-meta-row"><span class="crop-meta-label">Waktu Melintas</span><span class="crop-meta-val" id="metaTime">—</span></div>
+        <div class="crop-meta-row"><span class="crop-meta-label">Arah Melintas</span><span class="crop-meta-val" id="metaDir">—</span></div>
+        <div class="crop-meta-row"><span class="crop-meta-label">Tingkat Keyakinan</span><span class="crop-meta-val" id="metaConf">—</span></div>
+      </div>
+    </div>
+    <div class="crop-modal-footer">
+      <div class="seg-toggle" id="modalMaskToggle" role="group" aria-label="Mode foto crop">
+        <button type="button" id="modalBtnMask" class="seg-btn active">Dengan highlight</button>
+        <button type="button" id="modalBtnRaw" class="seg-btn">Foto asli</button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn primary" id="modalJumpPlay">Lompat &amp; Putar</button>
+        <button type="button" class="modal-btn" id="modalDismiss">Tutup (Tetap Jeda)</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -674,11 +931,109 @@ const btnMaskOff = document.getElementById("btnMaskOff");
 const tabPassed = document.getElementById("tabPassed");
 const tabAll = document.getElementById("tabAll");
 
+const cropModalBackdrop = document.getElementById("cropModalBackdrop");
+const cropModalTitle = document.getElementById("cropModalTitle");
+const cropModalImg = document.getElementById("cropModalImg");
+const cropImgEmpty = document.getElementById("cropImgEmpty");
+const metaVehicleId = document.getElementById("metaVehicleId");
+const metaClass = document.getElementById("metaClass");
+const metaTime = document.getElementById("metaTime");
+const metaDir = document.getElementById("metaDir");
+const metaConf = document.getElementById("metaConf");
+const modalBtnMask = document.getElementById("modalBtnMask");
+const modalBtnRaw = document.getElementById("modalBtnRaw");
+const modalMaskToggle = document.getElementById("modalMaskToggle");
+const cropModalClose = document.getElementById("cropModalClose");
+const modalDismiss = document.getElementById("modalDismiss");
+const modalJumpPlay = document.getElementById("modalJumpPlay");
+
+const CAM_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+
 const events = DATA.events || [];
 let feedMode = "passed";
 let lastCountedIndex = -1;
 let lastRenderedSignature = "";
 let pulseTimeout = null;
+let activeModalEvent = null;
+let modalShowMask = true;
+
+function formatClock(sec) {{
+  const total = Math.max(0, Math.floor(sec));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}}
+
+function renderModalImage() {{
+  if (!activeModalEvent) return;
+  const hasMask = Boolean(activeModalEvent.cropMask);
+  const hasRaw = Boolean(activeModalEvent.cropRaw);
+  modalMaskToggle.style.display = (hasMask && hasRaw) ? "inline-flex" : "none";
+  const src = modalShowMask
+    ? (activeModalEvent.cropMask || activeModalEvent.cropRaw)
+    : (activeModalEvent.cropRaw || activeModalEvent.cropMask);
+  modalBtnMask.classList.toggle("active", modalShowMask);
+  modalBtnRaw.classList.toggle("active", !modalShowMask);
+  if (src) {{
+    cropModalImg.src = src;
+    cropModalImg.style.display = "block";
+    cropImgEmpty.style.display = "none";
+  }} else {{
+    cropModalImg.removeAttribute("src");
+    cropModalImg.style.display = "none";
+    cropImgEmpty.style.display = "block";
+  }}
+}}
+
+function openCropModal(ev) {{
+  if (!ev) return;
+  // Jeda video otomatis saat pengguna membuka foto crop ID kendaraan
+  if (!video.paused) {{
+    video.pause();
+  }}
+  activeModalEvent = ev;
+  modalShowMask = !(btnMaskOff && btnMaskOff.classList.contains("active"));
+  cropModalTitle.textContent = "Foto Kendaraan — ID " + ev.vehicle_id;
+  metaVehicleId.textContent = "ID " + ev.vehicle_id;
+  metaClass.textContent = ev.class_label;
+  metaTime.textContent = formatClock(ev.ts) + " (" + ev.ts.toFixed(1) + " dtk)";
+  metaDir.textContent = ev.direction === "up" ? "Menuju atas" : "Menuju bawah";
+  metaConf.textContent = ev.score.toFixed(1) + "%";
+  renderModalImage();
+  cropModalBackdrop.classList.add("open");
+}}
+
+function closeCropModal() {{
+  cropModalBackdrop.classList.remove("open");
+  activeModalEvent = null;
+}}
+
+modalBtnMask.addEventListener("click", () => {{
+  modalShowMask = true;
+  renderModalImage();
+}});
+modalBtnRaw.addEventListener("click", () => {{
+  modalShowMask = false;
+  renderModalImage();
+}});
+cropModalClose.addEventListener("click", closeCropModal);
+modalDismiss.addEventListener("click", closeCropModal);
+cropModalBackdrop.addEventListener("click", (e) => {{
+  if (e.target === cropModalBackdrop) closeCropModal();
+}});
+document.addEventListener("keydown", (e) => {{
+  if (e.key === "Escape" && cropModalBackdrop.classList.contains("open")) {{
+    closeCropModal();
+  }}
+}});
+modalJumpPlay.addEventListener("click", () => {{
+  if (!activeModalEvent) return;
+  const targetTime = Math.max(0, activeModalEvent.ts - 0.6);
+  closeCropModal();
+  video.currentTime = targetTime;
+  video.play().catch(() => {{}});
+  updateDisplay(true);
+}});
 
 function setVideoSource(url, preserveTime) {{
   if (!url) return;
@@ -779,9 +1134,18 @@ function renderFeed(passedCount, currentTime) {{
     tr.innerHTML =
       "<td>" + ev.seq + "</td>" +
       "<td>" + ev.ts.toFixed(1) + " dtk</td>" +
-      "<td>ID " + ev.vehicle_id + "</td>" +
+      '<td><button type="button" class="id-crop-btn" title="Klik untuk menjeda video &amp; melihat foto crop">' +
+        "ID " + ev.vehicle_id + " " + CAM_SVG +
+      "</button></td>" +
       "<td>" + ev.class_label + "</td>" +
       "<td>" + ev.score.toFixed(1) + "%</td>";
+
+    const idBtn = tr.querySelector(".id-crop-btn");
+    idBtn.addEventListener("click", (e) => {{
+      e.stopPropagation();
+      openCropModal(ev);
+    }});
+
     tr.addEventListener("click", () => {{
       const targetTime = Math.max(0, ev.ts - 0.6);
       video.currentTime = targetTime;
@@ -820,22 +1184,20 @@ function updateDisplay(forceFeed) {{
     const nxt = events[passedCount];
     nextEventHint.textContent = "Berikutnya: " + nxt.ts.toFixed(1) + " dtk (ID " + nxt.vehicle_id + ")";
   }} else {{
-    nextEventHint.textContent = "Seluruh event video selesai";
+    nextEventHint.textContent = "Seluruh data video selesai";
   }}
 
   if (passedCount > 0) {{
     const latest = events[passedCount - 1];
     const age = now - latest.ts;
-    if (age >= -0.05 && age <= 2.5) {{
-      liveBanner.className = "live-banner active";
-      liveBanner.innerHTML =
-        "<span>Baru terhitung: ID " + latest.vehicle_id + " · " + latest.class_label + "</span>" +
-        "<span>" + latest.ts.toFixed(1) + " dtk · conf " + latest.score.toFixed(1) + "%</span>";
-    }} else {{
-      liveBanner.className = "live-banner";
-      liveBanner.innerHTML =
-        "<span>Terakhir melintas: ID " + latest.vehicle_id + " · " + latest.class_label + "</span>" +
-        "<span>" + latest.ts.toFixed(1) + " dtk</span>";
+    liveBanner.className = (age >= -0.05 && age <= 2.5) ? "live-banner active" : "live-banner";
+    const prefix = (age >= -0.05 && age <= 2.5) ? "Baru terhitung" : "Terakhir melintas";
+    liveBanner.innerHTML =
+      "<span>" + prefix + ": ID " + latest.vehicle_id + " · " + latest.class_label + " (" + latest.ts.toFixed(1) + " dtk)</span>" +
+      '<button type="button" class="banner-crop-btn" id="bannerViewCrop">Lihat foto</button>';
+    const bannerBtn = document.getElementById("bannerViewCrop");
+    if (bannerBtn) {{
+      bannerBtn.addEventListener("click", () => openCropModal(latest));
     }}
   }} else {{
     liveBanner.className = "live-banner";
@@ -873,50 +1235,63 @@ updateDisplay(true);
 """
 
 
-def render_playback(snapshot: CountingSnapshot) -> None:
-    st.subheader("Playback real-time dan counting timeline")
+def render_playback(
+    snapshot: CountingSnapshot,
+    all_cameras_frame: pd.DataFrame,
+    *,
+    only_test_locations: bool,
+) -> None:
+    st.subheader("Pemutar rekaman CCTV & penghitung otomatis")
     if not snapshot.overlay_manifest or snapshot.timeline_frame is None:
-        st.info(
-            "Playback interaktif tersedia setelah NB06 selesai dengan artefak "
-            "`overlay_manifest.json` dan `counting_timeline.csv`."
-        )
+        st.info("Rekaman video pemantauan belum tersedia.")
         return
     manifest_frame = pd.DataFrame(snapshot.overlay_manifest)
-    counted_splits = set(snapshot.summary.get("counted_splits", []))
-    counted_cameras = sorted(
-        manifest_frame.loc[manifest_frame["split"].isin(counted_splits), "camera_id"].unique().tolist()
+    allowed_cameras = set(
+        all_cameras_frame.loc[all_cameras_frame["is_test_location"], "camera_id"].tolist()
+        if only_test_locations
+        else all_cameras_frame["camera_id"].tolist()
     )
-    other_cameras = sorted(
-        set(manifest_frame["camera_id"].unique().tolist()) - set(counted_cameras)
+    manifest_frame = manifest_frame[manifest_frame["camera_id"].isin(allowed_cameras)].copy()
+    if manifest_frame.empty:
+        st.info("Tidak ada rekaman video untuk cakupan lokasi yang dipilih.")
+        return
+
+    test_camera_ids = set(
+        all_cameras_frame.loc[all_cameras_frame["is_test_location"], "camera_id"].tolist()
     )
-    camera_options = ["Semua titik", *counted_cameras, *other_cameras]
-    default_camera_index = 1 if counted_cameras else 0
-    selector_cols = st.columns([1, 1.4], gap="medium")
+    available_cameras = sorted(manifest_frame["camera_id"].unique().tolist())
+    # Urutkan lokasi uji independen di atas agar mudah diinspeksi
+    ordered_cameras = [c for c in available_cameras if c in test_camera_ids] + [
+        c for c in available_cameras if c not in test_camera_ids
+    ]
+
+    def _format_camera_option(cam_id: str) -> str:
+        name = camera_display_name(cam_id)
+        badge = "Lokasi Uji Independen" if cam_id in test_camera_ids else "Lokasi Pantau Reguler"
+        return f"{name} — {badge}"
+
+    selector_cols = st.columns([1.2, 1.3], gap="medium")
     selected_camera = selector_cols[0].selectbox(
-        "Titik CCTV", camera_options, index=default_camera_index, key="playback_camera"
+        "Pilih lokasi CCTV",
+        ordered_cameras,
+        format_func=_format_camera_option,
+        key=f"playback_camera_{'test' if only_test_locations else 'all'}",
     )
-    filtered_manifest = (
-        manifest_frame
-        if selected_camera == "Semua titik"
-        else manifest_frame[manifest_frame["camera_id"] == selected_camera]
-    )
+    filtered_manifest = manifest_frame[manifest_frame["camera_id"] == selected_camera]
     if filtered_manifest.empty:
-        st.info("Tidak ada video overlay untuk titik ini.")
+        st.info("Tidak ada video rekaman untuk lokasi ini.")
         return
     selected_video = selector_cols[1].selectbox(
-        "Video overlay", filtered_manifest["video_stem"].tolist(), key="playback_video"
+        "Rekaman video",
+        filtered_manifest["video_stem"].tolist(),
+        key=f"playback_video_{'test' if only_test_locations else 'all'}",
     )
     video_row = filtered_manifest[filtered_manifest["video_stem"] == selected_video].iloc[0]
     video_timeline = snapshot.timeline_frame[
         snapshot.timeline_frame["video_stem"] == selected_video
     ].copy()
     if video_timeline.empty:
-        st.warning("Belum ada event tracking pada video ini.")
-    elif video_row["split"] not in counted_splits:
-        st.info(
-            f"Video ini berasal dari split `{video_row['split']}`. Counting yang tampil adalah "
-            "mode presentasi/inspeksi, bukan angka resmi evaluasi test."
-        )
+        st.warning("Belum ada kendaraan yang tercatat melintas pada video ini.")
 
     video_base_url = resolve_video_base_url()
     if video_base_url:
@@ -925,7 +1300,7 @@ def render_playback(snapshot: CountingSnapshot) -> None:
         url_with_mask = _build_remote_video_url(video_base_url, rel_with)
         url_without_mask = _build_remote_video_url(video_base_url, rel_without)
         if not url_with_mask and not url_without_mask:
-            st.warning("Manifest video tidak memuat path relatif untuk mode cloud streaming.")
+            st.warning("Tautan video streaming untuk lokasi ini belum tersedia.")
             return
     else:
         with_mask_path = _resolve_project_path(
@@ -937,36 +1312,52 @@ def render_playback(snapshot: CountingSnapshot) -> None:
 
         if not with_mask_exists and not without_mask_exists:
             st.info(
-                "Video overlay belum terhubung. Untuk deployment Streamlit Cloud, tambahkan "
-                "`VIDEO_BASE_URL` di **App Settings → Secrets** yang mengarah ke HuggingFace Dataset "
-                "berisi 10 file MP4 `overlays_browser/` (lihat `README.md`)."
+                "Rekaman video belum terhubung. Tambahkan `VIDEO_BASE_URL` pada pengaturan secrets "
+                "atau pastikan file video lokal tersedia."
             )
             return
 
         media_server = get_local_video_server()
         url_with_mask = media_server.register(with_mask_path) if with_mask_exists else None
         url_without_mask = media_server.register(without_mask_path) if without_mask_exists else None
+
+    # Siapkan pasangan foto crop (dengan & tanpa highlight) khusus untuk video yang sedang dipilih
+    crop_entries_list: list[tuple[int, str, str]] = []
+    if snapshot.event_clip_manifest:
+        for item in snapshot.event_clip_manifest:
+            if str(item.get("camera_id", "")) == str(video_row["camera_id"]) and str(
+                item.get("video_stem", "")
+            ) == str(selected_video):
+                vid = int(item.get("vehicle_id", 0))
+                mask_p = str(item.get("crop_path_with_mask") or "").strip()
+                raw_p = str(item.get("crop_path_without_mask") or item.get("crop_path") or "").strip()
+                crop_entries_list.append((vid, mask_p, raw_p))
+    crop_data_uris = _load_video_crop_data_uris(
+        str(resolve_nb06_root().resolve()),
+        tuple(crop_entries_list),
+    )
+
     fps = float(video_row.get("fps", 25.0))
     duration_seconds = float(video_row.get("duration_seconds", 0.0))
-    events = _serialize_timeline_events(video_timeline, fps)
+    events = _serialize_timeline_events(video_timeline, fps, crop_data_uris)
 
     player_html = build_realtime_playback_html(
         video_url_with_mask=url_with_mask,
         video_url_without_mask=url_without_mask,
         camera_id=str(video_row["camera_id"]),
+        camera_label=camera_display_name(str(video_row["camera_id"])),
         video_stem=str(selected_video),
         fps=fps,
         duration_seconds=duration_seconds,
         events=events,
     )
     if hasattr(st, "iframe"):
-        st.iframe(player_html, height=625)
+        st.iframe(player_html, height=640)
     else:
-        components.html(player_html, height=625, scrolling=False)
+        components.html(player_html, height=640, scrolling=False)
     st.caption(
-        "Pemutar ini menyinkronkan posisi detik video secara real-time dengan artefak pelintasan garis "
-        "(`counting_timeline.csv`). Toggle mask hanya mengganti lapisan tampilan tanpa mengubah hasil "
-        "klasifikasi maupun jumlah kendaraan."
+        "Pemutar menyinkronkan detik video secara langsung dengan catatan kendaraan yang melewati garis hitung kuning. "
+        "Klik **ID kendaraan** di tabel log untuk menjeda video dan langsung membuka foto potongannya."
     )
 
 
@@ -1143,56 +1534,75 @@ def render_model_validation(snapshot: CountingSnapshot) -> None:
         )
 
 
-def render_event_footage(snapshot: CountingSnapshot) -> None:
-    st.subheader("Galeri crop event")
-    st.caption("Setiap item hanya menampilkan crop bbox kendaraan agar event mudah dibandingkan.")
+def render_event_footage(
+    snapshot: CountingSnapshot,
+    all_cameras_frame: pd.DataFrame,
+    *,
+    only_test_locations: bool,
+) -> None:
+    st.subheader("Galeri foto kendaraan")
+    st.caption("Potongan foto tiap kendaraan berlampu tidak standar untuk memudahkan pemeriksaan visual.")
     if not snapshot.event_clip_manifest:
-        st.info(
-            "Event belum tersedia. Jalankan tahap tracking/counting versi terbaru untuk membuat "
-            "`event_clip_manifest.json` dan folder `event_crops/`."
-        )
+        st.info("Galeri foto kendaraan belum tersedia.")
         return
     clips = pd.DataFrame(snapshot.event_clip_manifest)
     nonstandard_classes = {"MobilTidakStandar", "MotorTidakStandar"}
     clips = clips[clips["class_name"].isin(nonstandard_classes)].copy()
+    allowed_cameras = set(
+        all_cameras_frame.loc[all_cameras_frame["is_test_location"], "camera_id"].tolist()
+        if only_test_locations
+        else all_cameras_frame["camera_id"].tolist()
+    )
+    clips = clips[clips["camera_id"].isin(allowed_cameras)].copy()
+    if clips.empty:
+        st.info("Belum ada foto kendaraan pada cakupan lokasi ini.")
+        return
+
     filter_cols = st.columns(2, gap="medium")
     class_filter = filter_cols[0].selectbox(
-        "Kelas event", ["Semua tidak standar", "Mobil tidak standar", "Motor tidak standar"], key="clip_class"
+        "Kategori kendaraan",
+        ["Semua tidak standar", "Mobil tidak standar", "Motor tidak standar"],
+        key="clip_class",
     )
+    camera_options = ["Semua lokasi", *sorted(clips["camera_id"].unique().tolist())]
     camera_filter = filter_cols[1].selectbox(
-        "Titik CCTV", ["Semua titik", *sorted(clips["camera_id"].unique().tolist())], key="clip_camera"
+        "Lokasi CCTV",
+        camera_options,
+        format_func=lambda cid: cid if cid == "Semua lokasi" else camera_display_name(cid),
+        key=f"clip_camera_{'test' if only_test_locations else 'all'}",
     )
     filtered = clips.copy()
     if class_filter == "Mobil tidak standar":
         filtered = filtered[filtered["class_name"].str.startswith("Mobil")]
     elif class_filter == "Motor tidak standar":
         filtered = filtered[filtered["class_name"].str.startswith("Motor")]
-    if camera_filter != "Semua titik":
+    if camera_filter != "Semua lokasi":
         filtered = filtered[filtered["camera_id"] == camera_filter]
     if filtered.empty:
-        st.info("Tidak ada footage untuk filter tersebut.")
+        st.info("Tidak ada foto kendaraan yang sesuai dengan filter.")
         return
     filtered = filtered.reset_index(drop=True)
-    st.caption(f"{len(filtered)} event cocok dengan filter.")
+    st.caption(f"{format_exact_count(len(filtered))} foto kendaraan sesuai filter.")
     render_event_gallery(filtered)
 
 
 def render_event_gallery(filtered: pd.DataFrame) -> None:
-    gallery_tab, grid_tab = st.tabs(["Detail event", "Grid 8 × 8"])
+    gallery_tab, grid_tab = st.tabs(["Detail kendaraan", "Grid 8 × 8"])
     mask_columns_available = False
     if "crop_path_with_mask" in filtered.columns and "crop_path_without_mask" in filtered.columns:
         crop_values = filtered[["crop_path_with_mask", "crop_path_without_mask"]].fillna("").astype(str)
         mask_columns_available = bool(crop_values.apply(lambda column: column.str.strip().ne("").any()).all())
     if mask_columns_available:
         mask_view = st.radio(
-            "Tampilan segmentasi crop", ["Mask tampil", "Mask disembunyikan"],
-            horizontal=True, key="gallery_mask_view",
+            "Tampilan foto",
+            ["Dengan highlight", "Foto asli"],
+            horizontal=True,
+            key="gallery_mask_view",
         )
-        crop_column = "crop_path_with_mask" if mask_view == "Mask tampil" else "crop_path_without_mask"
-        st.caption("Pilihan ini hanya mengubah tampilan crop; hasil klasifikasi dan hitungan tetap sama.")
+        crop_column = "crop_path_with_mask" if mask_view == "Dengan highlight" else "crop_path_without_mask"
+        st.caption("Pilihan ini hanya mengganti tampilan gambar; hasil deteksi dan jumlah kendaraan tetap sama.")
     else:
         crop_column = "crop_path"
-        st.info("Pasangan crop dengan dan tanpa mask akan tersedia setelah artefak galeri dibangun.")
     with gallery_tab:
         if "gallery_index" not in st.session_state or st.session_state.gallery_index >= len(filtered):
             st.session_state.gallery_index = 0
@@ -1211,17 +1621,17 @@ def render_event_gallery(filtered: pd.DataFrame) -> None:
                     width="stretch",
                 )
             else:
-                st.warning(f"Crop belum ditemukan: `{crop_path}`.")
+                st.warning(f"Foto belum ditemukan: `{crop_path}`.")
         with detail_column:
             class_name = str(selected_clip["class_name"])
             vehicle_type = "Mobil" if class_name.startswith("Mobil") else "Motor"
             st.markdown(f"### {CLASS_LABELS.get(class_name, class_name)}")
             st.write(f"**ID kendaraan:** {selected_clip['vehicle_id']}")
             st.write(f"**Jenis kendaraan:** {vehicle_type}")
-            st.write(f"**CCTV:** {selected_clip['camera_id']}")
-            st.write(f"**Menit:** {float(selected_clip.get('timestamp_seconds', 0)) / 60:.2f}")
-            st.write(f"**Frame:** {selected_clip['first_frame']}–{selected_clip['last_frame']}")
-            st.write(f"**Confidence rata-rata:** {float(selected_clip['mean_score']) * 100:.1f}%")
+            st.write(f"**Lokasi CCTV:** {camera_display_name(str(selected_clip['camera_id']))}")
+            st.write(f"**Menit rekaman:** {float(selected_clip.get('timestamp_seconds', 0)) / 60:.2f}")
+            st.write(f"**Rentang frame:** {selected_clip['first_frame']}–{selected_clip['last_frame']}")
+            st.write(f"**Tingkat keyakinan:** {float(selected_clip['mean_score']) * 100:.1f}%")
             previous_column, next_column = st.columns(2)
             if previous_column.button("← Sebelumnya", disabled=selected_index == 0, width="stretch"):
                 st.session_state.gallery_index = max(0, selected_index - 1)
@@ -1233,7 +1643,7 @@ def render_event_gallery(filtered: pd.DataFrame) -> None:
         page_count = max(1, (len(filtered) - 1) // 64 + 1)
         page = st.number_input("Halaman grid", min_value=1, max_value=page_count, value=1, step=1, key="gallery_page")
         page_frame = filtered.iloc[(page - 1) * 64: page * 64]
-        st.caption(f"Menampilkan {len(page_frame)} crop pada halaman {page}/{page_count}.")
+        st.caption(f"Menampilkan {len(page_frame)} foto pada halaman {page}/{page_count}.")
         for start in range(0, len(page_frame), 8):
             columns = st.columns(8, gap="small")
             for column, (_, item) in zip(columns, page_frame.iloc[start:start + 8].iterrows()):
@@ -1250,35 +1660,108 @@ def render_event_gallery(filtered: pd.DataFrame) -> None:
                         )
 
 
-def render_camera_section(snapshot: CountingSnapshot) -> None:
-    st.subheader("Per titik CCTV")
-    status_frame = build_camera_status_table(
-        snapshot.camera_table, snapshot.summary.get("counted_splits", [])
+def render_camera_section(all_cameras_frame: pd.DataFrame, *, only_test_locations: bool) -> None:
+    st.subheader("Ringkasan per titik CCTV")
+    active_frame = (
+        all_cameras_frame[all_cameras_frame["is_test_location"]].copy()
+        if only_test_locations
+        else all_cameras_frame.copy()
     )
-    st.dataframe(camera_display_frame(status_frame), hide_index=True, width="stretch")
-    st.caption(
-        "Titik CCTV di luar split hitung tetap ditampilkan agar cakupan dashboard tidak "
-        "tampak lebih luas dari yang benar-benar dihitung pada evaluasi test."
+    rows = []
+    for _, row in active_frame.iterrows():
+        rows.append(
+            {
+                "Lokasi CCTV": row["display_name"],
+                "Peran Lokasi": row["role_label"],
+                "Video": format_exact_count(row["videos_counted"]),
+                "Total Kendaraan": format_exact_count(row["crossings_counted"]),
+                "Mobil Tidak Standar": format_exact_count(row["mobil_crossings"]),
+                "Motor Tidak Standar": format_exact_count(row["motor_crossings"]),
+            }
+        )
+    scope_label = (
+        f"Total ({len(active_frame)} Lokasi Uji Independen)"
+        if only_test_locations
+        else f"Total Gabungan ({len(active_frame)} Lokasi)"
     )
-    if snapshot.camera_table is None:
-        return
-    with st.expander("Rincian per kelas untuk tiap titik CCTV"):
-        st.dataframe(class_display_frame(snapshot.camera_table), hide_index=True, width="stretch")
-        st.caption("Rincian kelas adalah bbox deteksi per frame; angka utama adalah track tidak standar yang melintasi garis.")
-
-
-def camera_display_frame(status_frame: pd.DataFrame) -> pd.DataFrame:
-    return pd.DataFrame(
+    rows.append(
         {
-            "Titik CCTV": status_frame["camera_id"],
-            "Split": status_frame["split"],
-            "Status": status_frame["status"],
-            "Video": formatted_column(status_frame, "videos_counted"),
-            "Kendaraan crossing": formatted_column(status_frame, "crossings_counted"),
-            "Mobil tidak standar crossing": formatted_column(status_frame, "jumlah_kendaraan_mobil_tidak_standar_melintasi_garis"),
-            "Motor tidak standar crossing": formatted_column(status_frame, "jumlah_kendaraan_motor_tidak_standar_melintasi_garis"),
+            "Lokasi CCTV": scope_label,
+            "Peran Lokasi": "—",
+            "Video": format_exact_count(int(active_frame["videos_counted"].sum())),
+            "Total Kendaraan": format_exact_count(int(active_frame["crossings_counted"].sum())),
+            "Mobil Tidak Standar": format_exact_count(int(active_frame["mobil_crossings"].sum())),
+            "Motor Tidak Standar": format_exact_count(int(active_frame["motor_crossings"].sum())),
         }
     )
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.caption(
+        "Seluruh lokasi menampilkan hasil penghitungan kendaraan yang melintasi garis hitung. "
+        "Untuk penjelasan lokasi mana saja yang dijadikan area uji objektif serta tingkat akurasi sistem, "
+        "buka tab **Lokasi Uji & Akurasi Sistem** di bagian atas."
+    )
+
+
+def render_test_locations_overview(all_cameras_frame: pd.DataFrame) -> None:
+    st.subheader("Titik CCTV Lokasi Uji Independen")
+    test_frame = all_cameras_frame[all_cameras_frame["is_test_location"]]
+    other_frame = all_cameras_frame[~all_cameras_frame["is_test_location"]]
+
+    test_names = " dan ".join(f"**{name}**" for name in test_frame["display_name"].tolist())
+    other_names = ", ".join(f"**{name}**" for name in other_frame["display_name"].tolist())
+
+    st.info(
+        f"Dari 5 titik CCTV yang dipantau, 2 titik ditetapkan khusus sebagai **Lokasi Uji Independen**, "
+        f"yaitu {test_names}. Kedua kamera tersebut **tidak pernah digunakan saat sistem belajar**, "
+        f"sehingga hasilnya menjadi tolok ukur objektif di lapangan. Sementara 3 titik lainnya "
+        f"({other_names}) sebelumnya ikut dipakai sebagai acuan pembelajaran dan penyelarasan sistem."
+    )
+
+    compare_cols = st.columns(3)
+    compare_cols[0].metric(
+        "Gabungan Semua Lokasi (5 Titik)",
+        format_exact_count(int(all_cameras_frame["crossings_counted"].sum())),
+        help=(
+            f"Mobil: {format_exact_count(int(all_cameras_frame['mobil_crossings'].sum()))} · "
+            f"Motor: {format_exact_count(int(all_cameras_frame['motor_crossings'].sum()))}"
+        ),
+        border=True,
+    )
+    compare_cols[1].metric(
+        "Lokasi Uji Independen (2 Titik)",
+        format_exact_count(int(test_frame["crossings_counted"].sum())),
+        help=(
+            f"Mobil: {format_exact_count(int(test_frame['mobil_crossings'].sum()))} · "
+            f"Motor: {format_exact_count(int(test_frame['motor_crossings'].sum()))}"
+        ),
+        border=True,
+    )
+    compare_cols[2].metric(
+        "Lokasi Acuan Pembelajaran (3 Titik)",
+        format_exact_count(int(other_frame["crossings_counted"].sum())),
+        help=(
+            f"Mobil: {format_exact_count(int(other_frame['mobil_crossings'].sum()))} · "
+            f"Motor: {format_exact_count(int(other_frame['motor_crossings'].sum()))}"
+        ),
+        border=True,
+    )
+
+    detail_rows = []
+    # Tampilkan Lokasi Uji Independen terlebih dahulu agar langsung menonjol
+    ordered = pd.concat([test_frame, other_frame], ignore_index=True)
+    for _, row in ordered.iterrows():
+        detail_rows.append(
+            {
+                "Lokasi CCTV": row["display_name"],
+                "Kode Kamera": row["camera_id"],
+                "Status Lokasi": ROLE_INDEPENDENT_TEST if row["is_test_location"] else "Lokasi Acuan Sistem",
+                "Total Kendaraan": format_exact_count(row["crossings_counted"]),
+                "Mobil": format_exact_count(row["mobil_crossings"]),
+                "Motor": format_exact_count(row["motor_crossings"]),
+                "Keterangan": row["role_detail"],
+            }
+        )
+    st.dataframe(pd.DataFrame(detail_rows), hide_index=True, width="stretch")
 
 
 def class_display_frame(camera_table: pd.DataFrame) -> pd.DataFrame:
@@ -1286,7 +1769,9 @@ def class_display_frame(camera_table: pd.DataFrame) -> pd.DataFrame:
         CLASS_LABELS[class_name]: formatted_column(camera_table, class_name)
         for class_name in CLASS_NAMES
     }
-    return pd.DataFrame({"Titik CCTV": camera_table["camera_id"], **class_columns})
+    return pd.DataFrame(
+        {"Lokasi CCTV": [camera_display_name(str(c)) for c in camera_table["camera_id"]], **class_columns}
+    )
 
 
 def formatted_column(frame: pd.DataFrame, column_name: str) -> list[str]:
@@ -1295,36 +1780,39 @@ def formatted_column(frame: pd.DataFrame, column_name: str) -> list[str]:
     return [format_count(value) for value in frame[column_name]]
 
 
-def render_contract_section(summary: dict) -> None:
+def render_contract_section(summary: dict, camera_table: pd.DataFrame | None = None) -> None:
     counting_totals = summary["counting_totals"]
-    st.subheader("Kendaraan tidak standar melintasi garis")
-    st.caption("Satu track dihitung sekali saat center bbox melewati garis hitung; arah crossing ikut dicatat.")
+    st.subheader("Rekap resmi 2 Lokasi Uji Independen")
+    st.caption("Setiap kendaraan dihitung satu kali saat melewati garis hitung virtual; arah melintas ikut dicatat.")
     st.dataframe(
         pd.DataFrame({
-            "Keluaran": ["Mobil tidak standar", "Motor tidak standar"],
-            "Jumlah": [
-                format_count(counting_totals.get("jumlah_kendaraan_mobil_tidak_standar_melintasi_garis", 0)),
-                format_count(counting_totals.get("jumlah_kendaraan_motor_tidak_standar_melintasi_garis", 0)),
+            "Kategori": ["Mobil tidak standar", "Motor tidak standar"],
+            "Jumlah (2 Lokasi Uji)": [
+                format_exact_count(counting_totals.get("jumlah_kendaraan_mobil_tidak_standar_melintasi_garis", 0)),
+                format_exact_count(counting_totals.get("jumlah_kendaraan_motor_tidak_standar_melintasi_garis", 0)),
             ],
         }),
         hide_index=True,
         width="stretch",
     )
+    if camera_table is not None and not camera_table.empty:
+        with st.expander("Rincian deteksi per kategori pada 2 lokasi uji"):
+            st.dataframe(class_display_frame(camera_table), hide_index=True, width="stretch")
+            st.caption("Angka pada tabel rincian ini adalah total kemunculan per frame video sebagai bahan audit.")
 
 
 def render_quality_section(summary: dict) -> None:
-    with st.expander("Cara angka ini dihasilkan"):
+    with st.expander("Rincian teknis proses penyaringan & penghitungan"):
         quality_rows = [
             ("Frame diproses", format_count(summary.get("frames_processed"))),
             ("Deteksi mentah", format_count(summary.get("raw_detections"))),
-            ("Deteksi tanpa track", format_count(summary.get("untracked_detections"))),
+            ("Deteksi tanpa jejak", format_count(summary.get("untracked_detections"))),
             ("Deteksi lolos ambang", format_count(summary.get("thresholded_detections"))),
-            ("Track mentah ByteTrack", format_count(summary.get("tracks_total"))),
+            ("Jejak awal pelacakan", format_count(summary.get("tracks_total"))),
             ("Fragmen disambung", format_count(summary.get("fragments_stitched"))),
             ("Kendaraan setelah penyambungan", format_count(summary.get("vehicles_total"))),
-            ("Crossing line utama", format_count(summary.get("line_crossings_counted"))),
-            ("BBox event per frame (audit)", format_count(summary.get("bbox_per_frame_nonstandard_detections"))),
-            ("Video ditemukan", format_count(summary.get("videos_found"))),
+            ("Kendaraan melintasi garis (2 lokasi uji)", format_exact_count(summary.get("line_crossings_counted"))),
+            ("Video lokasi uji", format_exact_count(summary.get("videos_counted"))),
         ]
         st.dataframe(
             pd.DataFrame(quality_rows, columns=["Tahap", "Nilai"]),
@@ -1340,7 +1828,7 @@ def render_threshold_table(selected_thresholds: dict) -> None:
     st.dataframe(
         pd.DataFrame(
             [
-                {"Kelas": CLASS_LABELS.get(class_name, class_name), "Ambang": threshold}
+                {"Kategori": CLASS_LABELS.get(class_name, class_name), "Ambang": threshold}
                 for class_name, threshold in selected_thresholds.items()
             ]
         ),
@@ -1351,8 +1839,7 @@ def render_threshold_table(selected_thresholds: dict) -> None:
 
 def render_footer() -> None:
     st.caption(
-        "Sumber: `output/nb06/counting_summary.json` dan `output/nb06/counting_by_video.csv`. "
-        "Angka resmi hanya berasal dari tahap tracking dan counting video kontinu."
+        "Dashboard Pemantauan Lampu Kendaraan Tidak Standar — Dinas Komunikasi dan Informatika Kabupaten Bogor."
     )
 
 

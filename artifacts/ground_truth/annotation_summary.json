@@ -1,0 +1,49 @@
+{
+  "sample_total_frames": 254,
+  "reviewed_frames": 254,
+  "random_seed": 20261020,
+  "excluded_splits": [
+    "train",
+    "val"
+  ],
+  "split_by_camera": {
+    "bogor-kab-bappenda1": "train",
+    "bogor-kab-bappenda2": "test",
+    "bogor-kab-bappenda3": "train",
+    "bogor-kab-pdam2": "test",
+    "bogor-kab-pemda2": "val"
+  },
+  "class_names": [
+    "MobilStandar",
+    "MobilTidakStandar",
+    "MotorStandar",
+    "MotorTidakStandar",
+    "PantulanCahaya"
+  ],
+  "box_source_counts": {
+    "pseudo": 0,
+    "manual": 1219,
+    "edited": 1763
+  },
+  "class_box_counts": {
+    "MobilStandar": 237,
+    "MobilTidakStandar": 464,
+    "MotorStandar": 507,
+    "MotorTidakStandar": 945,
+    "PantulanCahaya": 829,
+    "BelumDitentukan": 0
+  },
+  "coco_annotations": 2982,
+  "coco_path": "D:\\Jere\\NewStyle\\output\\ground_truth\\annotations_coco.json",
+  "split_map_path": "D:\\Jere\\NewStyle\\output\\ground_truth\\yolo\\split_map.csv",
+  "gold_images": 254,
+  "gold_labels": 254,
+  "gold_boxes": 2982,
+  "gold_boxes_by_class": {
+    "Mobil": 701,
+    "Motor": 1452,
+    "PantulanCahaya": 829
+  },
+  "detector_gt_excluded_reflection_annotations": 829,
+  "detector_gt_reflection_target_boxes": 829
+}

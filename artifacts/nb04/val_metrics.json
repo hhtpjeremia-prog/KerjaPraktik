@@ -1,0 +1,65 @@
+{
+  "smoke_mode": false,
+  "split": "val",
+  "label_source": "gold",
+  "val_frames": 79,
+  "overall": {
+    "precision": 0.350004681723922,
+    "recall": 0.5332850781742804,
+    "mAP50": 0.38779857049405847,
+    "mAP50-95": 0.16101006887054872
+  },
+  "per_class": [
+    {
+      "Class": "MobilStandar",
+      "Images": 78,
+      "Instances": 209,
+      "Box-P": 0.69323,
+      "Box-R": 0.24868,
+      "Box-F1": 0.36605,
+      "mAP50": 0.51448,
+      "mAP50-95": 0.22533
+    },
+    {
+      "Class": "MobilTidakStandar",
+      "Images": 76,
+      "Instances": 168,
+      "Box-P": 0.25785,
+      "Box-R": 0.67262,
+      "Box-F1": 0.37279,
+      "mAP50": 0.30984,
+      "mAP50-95": 0.15176
+    },
+    {
+      "Class": "MotorStandar",
+      "Images": 70,
+      "Instances": 257,
+      "Box-P": 0.47341,
+      "Box-R": 0.24903,
+      "Box-F1": 0.32637,
+      "mAP50": 0.39921,
+      "mAP50-95": 0.15335
+    },
+    {
+      "Class": "MotorTidakStandar",
+      "Images": 78,
+      "Instances": 401,
+      "Box-P": 0.23847,
+      "Box-R": 0.82544,
+      "Box-F1": 0.37003,
+      "mAP50": 0.44718,
+      "mAP50-95": 0.18027
+    },
+    {
+      "Class": "PantulanCahaya",
+      "Images": 57,
+      "Instances": 167,
+      "Box-P": 0.08706,
+      "Box-R": 0.67066,
+      "Box-F1": 0.15412,
+      "mAP50": 0.26829,
+      "mAP50-95": 0.09434
+    }
+  ],
+  "best_weights": "D:\\Jere\\NewStyle\\output\\nb04\\runs\\nb04_yolo11n\\weights\\best.pt"
+}

@@ -1,0 +1,142 @@
+[
+  {
+    "video_stem": "atcs_bogor-kab-bappenda1_20261002_185759",
+    "camera_id": "bogor-kab-bappenda1",
+    "split": "train",
+    "fps": 24.999250022499325,
+    "frames_processed": 15000,
+    "duration_seconds": 600.018,
+    "counting_line": {
+      "y_pixel": 415,
+      "x_start": 131,
+      "x_end": 518,
+      "y_ratio": 0.72
+    },
+    "segmentation_overlay": {
+      "enabled": true,
+      "model": "facebook/sam2.1-hiera-tiny",
+      "alpha": 0.3,
+      "classes": [
+        "MobilTidakStandar",
+        "MotorTidakStandar"
+      ]
+    },
+    "codec": "H.264 (libx264)",
+    "video_relpath_with_mask": "atcs_bogor-kab-bappenda1_20261002_185759_overlay.mp4",
+    "video_relpath_without_mask": "without_mask/atcs_bogor-kab-bappenda1_20261002_185759_overlay_without_mask.mp4",
+    "overlay_path_with_mask": "overlays_browser/atcs_bogor-kab-bappenda1_20261002_185759_overlay.mp4",
+    "overlay_path_without_mask": "overlays_browser/without_mask/atcs_bogor-kab-bappenda1_20261002_185759_overlay_without_mask.mp4"
+  },
+  {
+    "video_stem": "atcs_bogor-kab-bappenda2_20261002_190817",
+    "camera_id": "bogor-kab-bappenda2",
+    "split": "test",
+    "fps": 24.999333351110636,
+    "frames_processed": 15000,
+    "duration_seconds": 600.016,
+    "counting_line": {
+      "y_pixel": 346,
+      "x_start": 137,
+      "x_end": 534,
+      "y_ratio": 0.72
+    },
+    "segmentation_overlay": {
+      "enabled": true,
+      "model": "facebook/sam2.1-hiera-tiny",
+      "alpha": 0.3,
+      "classes": [
+        "MobilTidakStandar",
+        "MotorTidakStandar"
+      ]
+    },
+    "codec": "H.264 (libx264)",
+    "video_relpath_with_mask": "atcs_bogor-kab-bappenda2_20261002_190817_overlay.mp4",
+    "video_relpath_without_mask": "without_mask/atcs_bogor-kab-bappenda2_20261002_190817_overlay_without_mask.mp4",
+    "overlay_path_with_mask": "overlays_browser/atcs_bogor-kab-bappenda2_20261002_190817_overlay.mp4",
+    "overlay_path_without_mask": "overlays_browser/without_mask/atcs_bogor-kab-bappenda2_20261002_190817_overlay_without_mask.mp4"
+  },
+  {
+    "video_stem": "atcs_bogor-kab-bappenda3_20261002_191842",
+    "camera_id": "bogor-kab-bappenda3",
+    "split": "train",
+    "fps": 24.999375015624608,
+    "frames_processed": 15000,
+    "duration_seconds": 600.015,
+    "counting_line": {
+      "y_pixel": 346,
+      "x_start": 114,
+      "x_end": 386,
+      "y_ratio": 0.72
+    },
+    "segmentation_overlay": {
+      "enabled": true,
+      "model": "facebook/sam2.1-hiera-tiny",
+      "alpha": 0.3,
+      "classes": [
+        "MobilTidakStandar",
+        "MotorTidakStandar"
+      ]
+    },
+    "codec": "H.264 (libx264)",
+    "video_relpath_with_mask": "atcs_bogor-kab-bappenda3_20261002_191842_overlay.mp4",
+    "video_relpath_without_mask": "without_mask/atcs_bogor-kab-bappenda3_20261002_191842_overlay_without_mask.mp4",
+    "overlay_path_with_mask": "overlays_browser/atcs_bogor-kab-bappenda3_20261002_191842_overlay.mp4",
+    "overlay_path_without_mask": "overlays_browser/without_mask/atcs_bogor-kab-bappenda3_20261002_191842_overlay_without_mask.mp4"
+  },
+  {
+    "video_stem": "atcs_bogor-kab-pdam2_20261002_192854",
+    "camera_id": "bogor-kab-pdam2",
+    "split": "test",
+    "fps": 24.916666666666668,
+    "frames_processed": 14950,
+    "duration_seconds": 600.0,
+    "counting_line": {
+      "y_pixel": 259,
+      "x_start": 73,
+      "x_end": 616,
+      "y_ratio": 0.72
+    },
+    "segmentation_overlay": {
+      "enabled": true,
+      "model": "facebook/sam2.1-hiera-tiny",
+      "alpha": 0.3,
+      "classes": [
+        "MobilTidakStandar",
+        "MotorTidakStandar"
+      ]
+    },
+    "codec": "H.264 (libx264)",
+    "video_relpath_with_mask": "atcs_bogor-kab-pdam2_20261002_192854_overlay.mp4",
+    "video_relpath_without_mask": "without_mask/atcs_bogor-kab-pdam2_20261002_192854_overlay_without_mask.mp4",
+    "overlay_path_with_mask": "overlays_browser/atcs_bogor-kab-pdam2_20261002_192854_overlay.mp4",
+    "overlay_path_without_mask": "overlays_browser/without_mask/atcs_bogor-kab-pdam2_20261002_192854_overlay_without_mask.mp4"
+  },
+  {
+    "video_stem": "atcs_bogor-kab-pemda2_20261002_193906",
+    "camera_id": "bogor-kab-pemda2",
+    "split": "val",
+    "fps": 24.999840562241314,
+    "frames_processed": 7839,
+    "duration_seconds": 313.562,
+    "counting_line": {
+      "y_pixel": 346,
+      "x_start": 16,
+      "x_end": 483,
+      "y_ratio": 0.72
+    },
+    "segmentation_overlay": {
+      "enabled": true,
+      "model": "facebook/sam2.1-hiera-tiny",
+      "alpha": 0.3,
+      "classes": [
+        "MobilTidakStandar",
+        "MotorTidakStandar"
+      ]
+    },
+    "codec": "H.264 (libx264)",
+    "video_relpath_with_mask": "atcs_bogor-kab-pemda2_20261002_193906_overlay.mp4",
+    "video_relpath_without_mask": "without_mask/atcs_bogor-kab-pemda2_20261002_193906_overlay_without_mask.mp4",
+    "overlay_path_with_mask": "overlays_browser/atcs_bogor-kab-pemda2_20261002_193906_overlay.mp4",
+    "overlay_path_without_mask": "overlays_browser/without_mask/atcs_bogor-kab-pemda2_20261002_193906_overlay_without_mask.mp4"
+  }
+]

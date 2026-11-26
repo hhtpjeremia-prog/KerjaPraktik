@@ -2,6 +2,7 @@
 
 import base64
 import html
+import importlib
 import json
 import os
 import sys
@@ -16,6 +17,11 @@ APP_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_ROOT
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
+
+import data as _data_mod
+
+if not hasattr(_data_mod, "build_all_cameras_crossing_table"):
+    _data_mod = importlib.reload(_data_mod)
 
 from data import (
     CLASS_NAMES,

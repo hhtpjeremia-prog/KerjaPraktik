@@ -1641,9 +1641,9 @@ def render_event_gallery(filtered: pd.DataFrame, *, is_searching: bool = False) 
             item_value = item.get("crop_path", "") if crop_column == "crop_path_without_mask" else ""
         return _resolve_project_path(item_value)
 
-    # Tampilan adaptif: kalau hasil pencarian ID sedikit (1-4 kendaraan), tampilkan kartu lebih besar + detail
+    # Tampilan adaptif: kalau hasil pencarian ID sedikit (1-4 kendaraan), tampilkan kartu proporsional (4 kolom) + detail
     if is_searching and len(filtered) <= 4:
-        card_cols = st.columns(min(len(filtered), 4), gap="medium")
+        card_cols = st.columns(4, gap="medium")
         for col, (_, item) in zip(card_cols, filtered.iterrows()):
             item_path = _resolve_crop_path(item)
             class_name = str(item["class_name"])

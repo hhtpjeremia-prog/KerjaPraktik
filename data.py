@@ -67,7 +67,7 @@ CAMERA_DISPLAY_NAMES = {
     "bogor-kab-pemda2": "Pemda 2",
 }
 
-ROLE_INDEPENDENT_TEST = "Lokasi Uji Independen"
+ROLE_INDEPENDENT_TEST = "Lokasi Uji Model"
 ROLE_REGULAR_MONITORING = "Lokasi Pantau Reguler"
 
 NOT_AVAILABLE_LABEL = "n/a"
@@ -228,11 +228,11 @@ def build_all_cameras_crossing_table(
             videos_count = len(manifest_videos_by_cam.get(camera_id, set()))
 
         if is_test_loc:
-            role_detail = "Lokasi Uji Independen — belum pernah dilihat sistem saat proses belajar"
+            role_detail = "Dipakai buat menguji performa model (tidak dipakai saat training)"
         elif split_name == "val":
-            role_detail = "Lokasi Penyelarasan — dipakai untuk menyempurnakan kepekaan deteksi"
+            role_detail = "Dipakai buat menyetel sensitivitas & threshold model"
         else:
-            role_detail = "Lokasi Acuan Belajar — dipakai untuk melatih pengenalan lampu kendaraan"
+            role_detail = "Dipakai saat proses training pengenalan lampu kendaraan"
 
         rows.append(
             {

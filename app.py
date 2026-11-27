@@ -20,7 +20,7 @@ if str(APP_ROOT) not in sys.path:
 
 import data as _data_mod
 
-if not hasattr(_data_mod, "build_all_cameras_crossing_table"):
+if getattr(_data_mod, "ROLE_INDEPENDENT_TEST", None) != "Lokasi Uji Model":
     _data_mod = importlib.reload(_data_mod)
 
 from data import (
@@ -42,8 +42,8 @@ from media_server import LocalVideoServer
 
 PAGE_TITLE = "Pendeteksi Objek Lampu Kendaraan Tidak Standar — CCTV Kab. Bogor"
 
-SCOPE_ALL_LOCATIONS = "Semua Lokasi Pantau (5 Titik CCTV)"
-SCOPE_TEST_LOCATIONS = "Lokasi Uji Independen (2 Titik CCTV)"
+SCOPE_ALL_LOCATIONS = "Semua Lokasi (5 Titik CCTV)"
+SCOPE_TEST_LOCATIONS = "Lokasi Uji Model (2 Titik CCTV)"
 
 CLASS_LABELS = {
     "MobilStandar": "Mobil standar",
@@ -111,12 +111,12 @@ def main() -> None:
     )
 
     tab_overview, tab_locations = st.tabs(
-        ["Pemantauan Umum", "Lokasi Uji & Akurasi Sistem"]
+        ["Pemantauan Umum", "Performa Model pada Data Uji"]
     )
 
     with tab_overview:
         selected_scope = st.radio(
-            "Cakupan lokasi pantau",
+            "Pilih cakupan lokasi",
             [SCOPE_ALL_LOCATIONS, SCOPE_TEST_LOCATIONS],
             horizontal=True,
             key="overview_scope",
@@ -124,13 +124,13 @@ def main() -> None:
         only_test_locations = selected_scope == SCOPE_TEST_LOCATIONS
         if only_test_locations:
             st.caption(
-                "Menampilkan hasil khusus dari 2 lokasi uji independen (**Bappenda 2** dan **PDAM 2**) — "
-                "kamera yang tidak pernah dipakai saat sistem belajar, sehingga mencerminkan kinerja objektif di lapangan."
+                "Menampilkan khusus 2 titik yang dipakai buat menguji performa model (**Bappenda 2** dan **PDAM 2**) — "
+                "keduanya tidak ikut saat training, jadi hasilnya menggambarkan performa model di lokasi baru."
             )
         else:
             st.caption(
-                "Menampilkan gabungan seluruh kendaraan terdeteksi di 5 lokasi CCTV Kabupaten Bogor. "
-                "Pilih **Lokasi Uji Independen** di atas untuk fokus pada 2 lokasi pengujian objektif."
+                "Menampilkan gabungan hasil deteksi dari 5 titik CCTV Kabupaten Bogor. "
+                "Pindah ke **Lokasi Uji Model** kalau mau fokus ke 2 titik yang dipakai buat menguji model."
             )
         render_totals(all_cameras_frame, only_test_locations=only_test_locations)
         st.divider()
@@ -183,8 +183,8 @@ def render_header(summary: dict | None) -> None:
     del summary
     st.title(PAGE_TITLE)
     st.caption(
-        "Pemantauan otomatis kendaraan bermotor berlampu tidak standar yang melintasi garis hitung "
-        "di 5 titik CCTV Kabupaten Bogor. Setiap kendaraan dihitung satu kali saat melintas."
+        "Deteksi otomatis kendaraan berlampu tidak standar di 5 titik CCTV Kabupaten Bogor. "
+        "Tiap kendaraan dihitung sekali saat melintasi garis hitung kuning."
     )
 
 
@@ -1273,7 +1273,7 @@ def render_playback(
 
     def _format_camera_option(cam_id: str) -> str:
         name = camera_display_name(cam_id)
-        badge = "Lokasi Uji Independen" if cam_id in test_camera_ids else "Lokasi Pantau Reguler"
+        badge = "Lokasi Uji Model" if cam_id in test_camera_ids else "Lokasi Pantau Reguler"
         return f"{name} — {badge}"
 
     selector_cols = st.columns([1.2, 1.3], gap="medium")
@@ -1362,8 +1362,8 @@ def render_playback(
     else:
         components.html(player_html, height=640, scrolling=False)
     st.caption(
-        "Pemutar menyinkronkan detik video secara langsung dengan catatan kendaraan yang melewati garis hitung kuning. "
-        "Klik **ID kendaraan** di tabel log untuk menjeda video dan langsung membuka foto potongannya."
+        "Detik video otomatis sinkron sama daftar kendaraan yang lewat garis kuning. "
+        "Klik **ID kendaraan** di log kalau mau jeda video dan langsung lihat foto crop-nya."
     )
 
 
@@ -1547,7 +1547,10 @@ def render_event_footage(
     only_test_locations: bool,
 ) -> None:
     st.subheader("Galeri foto kendaraan")
-    st.caption("Potongan foto tiap kendaraan berlampu tidak standar untuk memudahkan pemeriksaan visual.")
+    st.caption(
+        "Kumpulan foto crop kendaraan berlampu tidak standar. Mau cek kendaraan tertentu? "
+        "Ketik langsung ID-nya di kotak pencarian di bawah."
+    )
     if not snapshot.event_clip_manifest:
         st.info("Galeri foto kendaraan belum tersedia.")
         return
@@ -1561,22 +1564,28 @@ def render_event_footage(
     )
     clips = clips[clips["camera_id"].isin(allowed_cameras)].copy()
     if clips.empty:
-        st.info("Belum ada foto kendaraan pada cakupan lokasi ini.")
+        st.info("Belum ada foto kendaraan di cakupan lokasi ini.")
         return
 
-    filter_cols = st.columns(2, gap="medium")
-    class_filter = filter_cols[0].selectbox(
+    filter_cols = st.columns([1.2, 1, 1], gap="medium")
+    search_query = filter_cols[0].text_input(
+        "Cari ID kendaraan",
+        placeholder="Ketik ID, misal 9521 atau 10...",
+        key="clip_id_search",
+    )
+    class_filter = filter_cols[1].selectbox(
         "Kategori kendaraan",
         ["Semua tidak standar", "Mobil tidak standar", "Motor tidak standar"],
         key="clip_class",
     )
     camera_options = ["Semua lokasi", *sorted(clips["camera_id"].unique().tolist())]
-    camera_filter = filter_cols[1].selectbox(
+    camera_filter = filter_cols[2].selectbox(
         "Lokasi CCTV",
         camera_options,
         format_func=lambda cid: cid if cid == "Semua lokasi" else camera_display_name(cid),
         key=f"clip_camera_{'test' if only_test_locations else 'all'}",
     )
+
     filtered = clips.copy()
     if class_filter == "Mobil tidak standar":
         filtered = filtered[filtered["class_name"].str.startswith("Mobil")]
@@ -1584,16 +1593,33 @@ def render_event_footage(
         filtered = filtered[filtered["class_name"].str.startswith("Motor")]
     if camera_filter != "Semua lokasi":
         filtered = filtered[filtered["camera_id"] == camera_filter]
+
+    cleaned_query = search_query.strip().lower().replace("id", "").replace("#", "").strip()
+    is_searching = bool(cleaned_query)
+    if is_searching:
+        vid_series = filtered["vehicle_id"].astype(str).str.strip()
+        exact_mask = vid_series == cleaned_query
+        partial_mask = vid_series.str.contains(cleaned_query, regex=False)
+        filtered = filtered[partial_mask].copy()
+        if not filtered.empty:
+            filtered["_exact"] = filtered["vehicle_id"].astype(str).str.strip() == cleaned_query
+            filtered = filtered.sort_values(["_exact", "vehicle_id"], ascending=[False, True]).drop(columns=["_exact"])
+
     if filtered.empty:
-        st.info("Tidak ada foto kendaraan yang sesuai dengan filter.")
+        if is_searching:
+            st.info(f"ID `{search_query.strip()}` nggak ketemu di filter saat ini. Coba cek lokasi atau kategori lain.")
+        else:
+            st.info("Nggak ada foto kendaraan yang cocok dengan filter tersebut.")
         return
     filtered = filtered.reset_index(drop=True)
-    st.caption(f"{format_exact_count(len(filtered))} foto kendaraan sesuai filter.")
-    render_event_gallery(filtered)
+    if is_searching:
+        st.caption(f"Ketemu **{format_exact_count(len(filtered))}** foto kendaraan yang cocok dengan pencarian `{search_query.strip()}`.")
+    else:
+        st.caption(f"Total **{format_exact_count(len(filtered))}** foto kendaraan sesuai filter.")
+    render_event_gallery(filtered, is_searching=is_searching)
 
 
-def render_event_gallery(filtered: pd.DataFrame) -> None:
-    gallery_tab, grid_tab = st.tabs(["Detail kendaraan", "Grid 8 × 8"])
+def render_event_gallery(filtered: pd.DataFrame, *, is_searching: bool = False) -> None:
     mask_columns_available = False
     if "crop_path_with_mask" in filtered.columns and "crop_path_without_mask" in filtered.columns:
         crop_values = filtered[["crop_path_with_mask", "crop_path_without_mask"]].fillna("").astype(str)
@@ -1606,64 +1632,61 @@ def render_event_gallery(filtered: pd.DataFrame) -> None:
             key="gallery_mask_view",
         )
         crop_column = "crop_path_with_mask" if mask_view == "Dengan highlight" else "crop_path_without_mask"
-        st.caption("Pilihan ini hanya mengganti tampilan gambar; hasil deteksi dan jumlah kendaraan tetap sama.")
     else:
         crop_column = "crop_path"
-    with gallery_tab:
-        if "gallery_index" not in st.session_state or st.session_state.gallery_index >= len(filtered):
-            st.session_state.gallery_index = 0
-        selected_index = st.session_state.gallery_index
-        selected_clip = filtered.iloc[selected_index]
-        crop_value = selected_clip.get(crop_column, "")
-        if pd.isna(crop_value) or not str(crop_value).strip():
-            crop_value = selected_clip.get("crop_path", "") if crop_column == "crop_path_without_mask" else ""
-        crop_path = _resolve_project_path(crop_value)
-        image_column, detail_column = st.columns([1.25, 1], gap="large")
-        with image_column:
-            if crop_path is not None and crop_path.exists():
-                st.image(
-                    str(crop_path),
-                    caption=f"ID {selected_clip['vehicle_id']} · {CLASS_LABELS.get(selected_clip['class_name'], selected_clip['class_name'])}",
-                    width="stretch",
-                )
-            else:
-                st.warning(f"Foto belum ditemukan: `{crop_path}`.")
-        with detail_column:
-            class_name = str(selected_clip["class_name"])
-            vehicle_type = "Mobil" if class_name.startswith("Mobil") else "Motor"
-            st.markdown(f"### {CLASS_LABELS.get(class_name, class_name)}")
-            st.write(f"**ID kendaraan:** {selected_clip['vehicle_id']}")
-            st.write(f"**Jenis kendaraan:** {vehicle_type}")
-            st.write(f"**Lokasi CCTV:** {camera_display_name(str(selected_clip['camera_id']))}")
-            st.write(f"**Menit rekaman:** {float(selected_clip.get('timestamp_seconds', 0)) / 60:.2f}")
-            st.write(f"**Rentang frame:** {selected_clip['first_frame']}–{selected_clip['last_frame']}")
-            st.write(f"**Tingkat keyakinan:** {float(selected_clip['mean_score']) * 100:.1f}%")
-            previous_column, next_column = st.columns(2)
-            if previous_column.button("← Sebelumnya", disabled=selected_index == 0, width="stretch"):
-                st.session_state.gallery_index = max(0, selected_index - 1)
-                st.rerun()
-            if next_column.button("Berikutnya →", disabled=selected_index == len(filtered) - 1, width="stretch"):
-                st.session_state.gallery_index = min(len(filtered) - 1, selected_index + 1)
-                st.rerun()
-    with grid_tab:
-        page_count = max(1, (len(filtered) - 1) // 64 + 1)
-        page = st.number_input("Halaman grid", min_value=1, max_value=page_count, value=1, step=1, key="gallery_page")
-        page_frame = filtered.iloc[(page - 1) * 64: page * 64]
-        st.caption(f"Menampilkan {len(page_frame)} foto pada halaman {page}/{page_count}.")
-        for start in range(0, len(page_frame), 8):
-            columns = st.columns(8, gap="small")
-            for column, (_, item) in zip(columns, page_frame.iloc[start:start + 8].iterrows()):
-                item_value = item.get(crop_column, "")
-                if pd.isna(item_value) or not str(item_value).strip():
-                    item_value = item.get("crop_path", "") if crop_column == "crop_path_without_mask" else ""
-                item_path = _resolve_project_path(item_value)
-                with column:
+
+    def _resolve_crop_path(item: pd.Series) -> Path | None:
+        item_value = item.get(crop_column, "")
+        if pd.isna(item_value) or not str(item_value).strip():
+            item_value = item.get("crop_path", "") if crop_column == "crop_path_without_mask" else ""
+        return _resolve_project_path(item_value)
+
+    # Tampilan adaptif: kalau hasil pencarian ID sedikit (1-4 kendaraan), tampilkan kartu lebih besar + detail
+    if is_searching and len(filtered) <= 4:
+        card_cols = st.columns(min(len(filtered), 4), gap="medium")
+        for col, (_, item) in zip(card_cols, filtered.iterrows()):
+            item_path = _resolve_crop_path(item)
+            class_name = str(item["class_name"])
+            ts_sec = float(item.get("timestamp_seconds", 0.0))
+            mins, secs = divmod(int(max(0, ts_sec)), 60)
+            with col:
+                with st.container(border=True):
                     if item_path is not None and item_path.exists():
-                        st.image(
-                            str(item_path),
-                            caption=f"ID {item['vehicle_id']}\n{CLASS_LABELS.get(item['class_name'], item['class_name'])}",
-                            width="stretch",
-                        )
+                        st.image(str(item_path), width="stretch")
+                    else:
+                        st.warning("Foto belum ditemukan.")
+                    st.markdown(f"**ID {item['vehicle_id']}** · {CLASS_LABELS.get(class_name, class_name)}")
+                    st.caption(
+                        f"Lokasi: **{camera_display_name(str(item['camera_id']))}**  \n"
+                        f"Waktu: **{mins:02d}:{secs:02d}** ({ts_sec:.1f} dtk) · "
+                        f"Keyakinan: **{float(item.get('mean_score', 0.0)) * 100:.1f}%**"
+                    )
+        return
+
+    page_count = max(1, (len(filtered) - 1) // 64 + 1)
+    if "gallery_page" in st.session_state and st.session_state.gallery_page > page_count:
+        st.session_state.gallery_page = 1
+    page = st.number_input(
+        "Halaman grid",
+        min_value=1,
+        max_value=page_count,
+        value=1,
+        step=1,
+        key="gallery_page",
+    )
+    page_frame = filtered.iloc[(page - 1) * 64: page * 64]
+    st.caption(f"Menampilkan {len(page_frame)} foto pada halaman {page}/{page_count}.")
+    for start in range(0, len(page_frame), 8):
+        columns = st.columns(8, gap="small")
+        for column, (_, item) in zip(columns, page_frame.iloc[start:start + 8].iterrows()):
+            item_path = _resolve_crop_path(item)
+            with column:
+                if item_path is not None and item_path.exists():
+                    st.image(
+                        str(item_path),
+                        caption=f"ID {item['vehicle_id']}\n{CLASS_LABELS.get(item['class_name'], item['class_name'])}",
+                        width="stretch",
+                    )
 
 
 def render_camera_section(all_cameras_frame: pd.DataFrame, *, only_test_locations: bool) -> None:
@@ -1686,7 +1709,7 @@ def render_camera_section(all_cameras_frame: pd.DataFrame, *, only_test_location
             }
         )
     scope_label = (
-        f"Total ({len(active_frame)} Lokasi Uji Independen)"
+        f"Total ({len(active_frame)} Lokasi Uji Model)"
         if only_test_locations
         else f"Total Gabungan ({len(active_frame)} Lokasi)"
     )
@@ -1702,14 +1725,13 @@ def render_camera_section(all_cameras_frame: pd.DataFrame, *, only_test_location
     )
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     st.caption(
-        "Seluruh lokasi menampilkan hasil penghitungan kendaraan yang melintasi garis hitung. "
-        "Untuk penjelasan lokasi mana saja yang dijadikan area uji objektif serta tingkat akurasi sistem, "
-        "buka tab **Lokasi Uji & Akurasi Sistem** di bagian atas."
+        "Semua lokasi sudah masuk ke rekap di atas. Kalau mau tahu titik mana saja yang dipakai buat "
+        "menguji model beserta grafik performanya, cek tab **Performa Model pada Data Uji** di bagian atas."
     )
 
 
 def render_test_locations_overview(all_cameras_frame: pd.DataFrame) -> None:
-    st.subheader("Titik CCTV Lokasi Uji Independen")
+    st.subheader("Lokasi yang Dipakai untuk Menguji Performa Model")
     test_frame = all_cameras_frame[all_cameras_frame["is_test_location"]]
     other_frame = all_cameras_frame[~all_cameras_frame["is_test_location"]]
 
@@ -1717,15 +1739,15 @@ def render_test_locations_overview(all_cameras_frame: pd.DataFrame) -> None:
     other_names = ", ".join(f"**{name}**" for name in other_frame["display_name"].tolist())
 
     st.info(
-        f"Dari 5 titik CCTV yang dipantau, 2 titik ditetapkan khusus sebagai **Lokasi Uji Independen**, "
-        f"yaitu {test_names}. Kedua kamera tersebut **tidak pernah digunakan saat sistem belajar**, "
-        f"sehingga hasilnya menjadi tolok ukur objektif di lapangan. Sementara 3 titik lainnya "
-        f"({other_names}) sebelumnya ikut dipakai sebagai acuan pembelajaran dan penyelarasan sistem."
+        f"Dari 5 titik CCTV yang dipantau, ada 2 titik yang khusus dipakai untuk menguji performa model — "
+        f"yaitu {test_names}. Kedua lokasi ini memang **tidak dipakai saat training**, jadi hasilnya benar-benar "
+        f"menggambarkan performa model di kondisi baru. Sementara 3 titik lainnya ({other_names}) "
+        f"ikut dipakai buat melatih dan menyetel model."
     )
 
     compare_cols = st.columns(3)
     compare_cols[0].metric(
-        "Gabungan Semua Lokasi (5 Titik)",
+        "Total Semua Lokasi (5 Titik)",
         format_exact_count(int(all_cameras_frame["crossings_counted"].sum())),
         help=(
             f"Mobil: {format_exact_count(int(all_cameras_frame['mobil_crossings'].sum()))} · "
@@ -1734,7 +1756,7 @@ def render_test_locations_overview(all_cameras_frame: pd.DataFrame) -> None:
         border=True,
     )
     compare_cols[1].metric(
-        "Lokasi Uji Independen (2 Titik)",
+        "Lokasi Uji Model (2 Titik)",
         format_exact_count(int(test_frame["crossings_counted"].sum())),
         help=(
             f"Mobil: {format_exact_count(int(test_frame['mobil_crossings'].sum()))} · "
@@ -1743,7 +1765,7 @@ def render_test_locations_overview(all_cameras_frame: pd.DataFrame) -> None:
         border=True,
     )
     compare_cols[2].metric(
-        "Lokasi Acuan Pembelajaran (3 Titik)",
+        "Lokasi Training & Penyetelan (3 Titik)",
         format_exact_count(int(other_frame["crossings_counted"].sum())),
         help=(
             f"Mobil: {format_exact_count(int(other_frame['mobil_crossings'].sum()))} · "
@@ -1753,14 +1775,14 @@ def render_test_locations_overview(all_cameras_frame: pd.DataFrame) -> None:
     )
 
     detail_rows = []
-    # Tampilkan Lokasi Uji Independen terlebih dahulu agar langsung menonjol
+    # Tampilkan Lokasi Uji Model terlebih dahulu agar langsung menonjol
     ordered = pd.concat([test_frame, other_frame], ignore_index=True)
     for _, row in ordered.iterrows():
         detail_rows.append(
             {
                 "Lokasi CCTV": row["display_name"],
                 "Kode Kamera": row["camera_id"],
-                "Status Lokasi": ROLE_INDEPENDENT_TEST if row["is_test_location"] else "Lokasi Acuan Sistem",
+                "Peran": ROLE_INDEPENDENT_TEST if row["is_test_location"] else "Lokasi Training / Penyetelan",
                 "Total Kendaraan": format_exact_count(row["crossings_counted"]),
                 "Mobil": format_exact_count(row["mobil_crossings"]),
                 "Motor": format_exact_count(row["motor_crossings"]),
@@ -1788,8 +1810,8 @@ def formatted_column(frame: pd.DataFrame, column_name: str) -> list[str]:
 
 def render_contract_section(summary: dict, camera_table: pd.DataFrame | None = None) -> None:
     counting_totals = summary["counting_totals"]
-    st.subheader("Rekap resmi 2 Lokasi Uji Independen")
-    st.caption("Setiap kendaraan dihitung satu kali saat melewati garis hitung virtual; arah melintas ikut dicatat.")
+    st.subheader("Rekap khusus 2 Lokasi Uji Model")
+    st.caption("Tiap kendaraan dihitung sekali waktu melewati garis hitung kuning; arah melintasnya ikut dicatat.")
     st.dataframe(
         pd.DataFrame({
             "Kategori": ["Mobil tidak standar", "Motor tidak standar"],
@@ -1802,9 +1824,9 @@ def render_contract_section(summary: dict, camera_table: pd.DataFrame | None = N
         width="stretch",
     )
     if camera_table is not None and not camera_table.empty:
-        with st.expander("Rincian deteksi per kategori pada 2 lokasi uji"):
+        with st.expander("Rincian deteksi per kategori di 2 lokasi uji"):
             st.dataframe(class_display_frame(camera_table), hide_index=True, width="stretch")
-            st.caption("Angka pada tabel rincian ini adalah total kemunculan per frame video sebagai bahan audit.")
+            st.caption("Angka di tabel ini adalah total kemunculan per frame video sebagai bahan cek ulang.")
 
 
 def render_quality_section(summary: dict) -> None:
